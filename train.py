@@ -12,6 +12,7 @@ import time
 import yaml
 import wandb
 from typing import Dict
+import time
 
 app = typer.Typer()
 
@@ -95,6 +96,10 @@ def test_model(conf_path: str, checkpoint_path: str):
     p_extend = configs.get("p_extend")
     extend_k = configs.get("extend_k")
 
+    n_embd = configs.get("n_embd")
+    n_layer = configs.get("n_layer")
+    n_head = configs.get("n_head")
+
     tokenizer_dir = f"./tokenizer-{vocab_size}"
     if os.path.exists(tokenizer_dir):
         tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_dir)    
@@ -105,9 +110,9 @@ def test_model(conf_path: str, checkpoint_path: str):
     config = GPT2Config(
         vocab_size=vocab_size,
         n_positions=max_length,
-        n_embd=128,
-        n_layer=4,
-        n_head=8,
+        n_embd=n_embd,
+        n_layer=n_layer,
+        n_head=n_head,
         bos_token_id=1,
         eos_token_id=2
     )
@@ -169,6 +174,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     eval_num_batches = configs.get("eval_num_batches")
 
+    n_embed = configs.get("n_embed")
+    n_layer = configs.get("n_layer")
+    n_head = configs.get("n_head")
+
     wandb.init(
         project="sar-transformer",
         config=configs.to_dict()
@@ -192,9 +201,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     config = GPT2Config(
         vocab_size=vocab_size,
         n_positions=max_length,
-        n_embd=128,
-        n_layer=4,
-        n_head=8,
+        n_embd=n_embed,
+        n_layer=n_layer,
+        n_head=n_head,
         bos_token_id=1,
         eos_token_id=2
     )
@@ -210,6 +219,8 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     
     for step in range(num_train_steps):
+        start_time_train = time.time()
+
         if mode == "sar":
             attention_mask = generate_sar_attention_mask(max_length, k=k)
         elif mode == "overlap":
@@ -234,10 +245,13 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         optimizer.zero_grad()
         optimizer.step()
 
-        wandb.log({"train/loss": joint_loss.item()}, step=step)
+        end_time_train = time.time()
+
+        wandb.log({"train/loss": joint_loss.item(), "train/step_timer": (end_time_train - start_time_train)}, step=step)
         print(f"Step {step}: train loss {joint_loss.item()}")
 
         if step % eval_every == 0:
+            start_time_eval = time.time()
             model.eval()
             eval_losses = []
             eval_batches = next(get_batches_from_dataset(test_dataset, batch_size=batch_size, num_batches=eval_num_batches))
@@ -251,7 +265,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
             joint_eval_loss = torch.stack(eval_losses).mean()
             eval_ppl = torch.exp(joint_eval_loss)
-            wandb.log({"eval/loss": joint_eval_loss.item(), "eval/ppl": eval_ppl.item()}, step=step)
+            end_time_eval = time.time()
+
+            wandb.log({"eval/loss": joint_eval_loss.item(), "eval/ppl": eval_ppl.item(), "eval/step_timer": end_time_eval - start_time_eval}, step=step)
             print(f"Step {step}: eval loss {joint_eval_loss.item()}, eval ppl {eval_ppl.item()}")
 
         if step % save_every == 0:
