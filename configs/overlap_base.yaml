@@ -1,0 +1,21 @@
+mode: "overlap"
+vocab_size: 8096
+checkpoint_dir: "./checkpoints"
+
+max_length: 128
+batch_size: 32
+num_train_steps: 32000
+eval_every: 100
+save_every: 1000
+
+lr: 1e-4
+
+k: 8
+p_extend: 0.5
+extend_k: 4
+
+eval_num_batches: 4
+
+n_embed: 128
+n_layer: 4
+n_head: 8

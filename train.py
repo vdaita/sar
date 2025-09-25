@@ -161,14 +161,16 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     mode = configs.get("mode")
     vocab_size = configs.get("vocab_size")
     checkpoint_dir = configs.get("checkpoint_dir")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     max_length = configs.get("max_length")
     batch_size = configs.get("batch_size")
     num_train_steps = configs.get("num_train_steps")
     eval_every = configs.get("eval_every")
     save_every = configs.get("save_every")
-    k = configs.get("k")
     lr = configs.get("lr")
 
+    k = configs.get("k")
     p_extend = configs.get("p_extend")
     extend_k = configs.get("extend_k")
 
@@ -184,6 +186,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     )
 
     tokenizer_dir = f"./{checkpoint_dir}/tokenizer-{vocab_size}"
+
     if os.path.exists(tokenizer_dir):
         tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_dir)    
     else:
@@ -225,8 +228,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             attention_mask = generate_sar_attention_mask(max_length, k=k)
         elif mode == "overlap":
             attention_mask = generate_overlap_attention_mask(max_length, k=k, p_extend=p_extend, extend_k=extend_k)
-        else:
+        elif mode == "base":
             attention_mask = generate_default_attention_mask(max_length)
+        else:
+            raise ValueError(f"Unknown mode for attention mask: {mode}")
 
         model.train()
         batches = next(get_batches_from_dataset(train_dataset, batch_size=batch_size, num_batches=1))
