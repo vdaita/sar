@@ -2,6 +2,7 @@ import torch
 from torch import nn, Tensor
 from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
 from datasets import load_dataset
+import datasets
 from rich import print
 from rich.table import Table
 from rich.console import Console
@@ -15,8 +16,14 @@ from typing import Dict
 import time
 
 app = typer.Typer()
+TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
 
-def tensor_to_table(tensor, one_color="bold green", zero_color="dim"):
+def get_tokenizer():
+    tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
+    tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+def tensor_to_table(tensor, one_color="bold red", zero_color="dim"):
     table = Table(show_header=False, box=None, pad_edge=False, collapse_padding=True)
     data = tensor.tolist()
     for row in data:
@@ -27,39 +34,10 @@ def tensor_to_table(tensor, one_color="bold green", zero_color="dim"):
         table.add_row(*colored_row)
     return table
 
-def get_limited_tokenizer(vocab_size: int) -> GPT2Tokenizer: 
-    # Load GPT-2 tokenizer
-    tok = GPT2Tokenizer.from_pretrained("gpt2")
-
-    # Get original vocab (dict: token -> id)
-    orig_vocab = tok.get_vocab()
-
-    # Sort by ID so we keep the first 10k *in order*
-    sorted_vocab = sorted(orig_vocab.items(), key=lambda x: x[1])
-    limited_vocab = dict(sorted_vocab[:vocab_size])
-
-    # Build a reverse vocab (id -> token)
-    id2token = {i: t for i, (t, _) in enumerate(limited_vocab.items())}
-    token2id = {t: i for i, t in id2token.items()}
-
-    # Replace tokenizer's internal vocab
-    tok.vocab = token2id
-    tok._tokenizer.model.vocab = token2id
-    tok._tokenizer.model.vocab_size = len(token2id)
-
-    # You may also want to set special tokens manually
-    tok.add_special_tokens({
-        "bos_token": "<bos>",
-        "eos_token": "<eos>",
-        "pad_token": "<pad>"
-    })
-
-    return tok
-
 def get_batches_from_dataset(dataset, batch_size: int, num_batches: int):
     for i in range(num_batches):
         batch = dataset.select(range(i * batch_size, (i + 1) * batch_size))
-        batch = torch.stack(batch["tokens"].to_list())
+        batch = torch.stack([tensor for tensor in batch["tokens"]])
         yield batch
 
 def expand_attention_mask(attention_mask: torch.Tensor, batch_size: int) -> torch.Tensor:
@@ -100,12 +78,7 @@ def test_model(conf_path: str, checkpoint_path: str):
     n_layer = configs.get("n_layer")
     n_head = configs.get("n_head")
 
-    tokenizer_dir = f"./tokenizer-{vocab_size}"
-    if os.path.exists(tokenizer_dir):
-        tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_dir)    
-    else:
-        tokenizer = get_limited_tokenizer(vocab_size)
-        tokenizer.save_pretrained(tokenizer_dir)
+    tokenizer = get_tokenizer()
 
     config = GPT2Config(
         vocab_size=vocab_size,
@@ -182,16 +155,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     wandb.init(
         project="sar-transformer",
-        config=configs.to_dict()
+        config=configs
     )
 
-    tokenizer_dir = f"./{checkpoint_dir}/tokenizer-{vocab_size}"
-
-    if os.path.exists(tokenizer_dir):
-        tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_dir)    
-    else:
-        tokenizer = get_limited_tokenizer(vocab_size)
-        tokenizer.save_pretrained(tokenizer_dir)
+    tokenizer = get_tokenizer()
 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
@@ -213,12 +180,26 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     model = GPT2LMHeadModel(config)
     train_dataset = load_dataset("roneneldan/TinyStories", split="train")
-    test_dataset = load_dataset("roneneldan/TinyStories",split="test")
+    test_dataset = load_dataset("roneneldan/TinyStories",split="validation")
 
     def preprocess_dataset(dataset):
         return {"tokens": tokenizer(dataset["text"], truncation=True, max_length=max_length, padding="max_length", return_tensors="pt")["input_ids"]}
 
-    train_dataset, test_dataset = train_dataset.map(preprocess_dataset), test_dataset.map(preprocess_dataset)
+    train_dataset_path = f"./checkpoints/train_dataset_{max_length}"
+    test_dataset_path = f"./checkpoints/test_dataset_{max_length}"
+
+    if os.path.exists(train_dataset_path) and os.path.exists(test_dataset_path):
+        print("Loading preprocessed datasets from disk...")
+        train_dataset = datasets.load_from_disk(train_dataset_path)
+        test_dataset = datasets.load_from_disk(test_dataset_path)
+    else:
+        print("Preprocessing datasets and saving to disk...")
+        train_dataset = train_dataset.map(preprocess_dataset, batched=True, num_proc=8)
+        test_dataset = test_dataset.map(preprocess_dataset, batched=True, num_proc=8)
+        train_dataset.save_to_disk(train_dataset_path)
+        test_dataset.save_to_disk(test_dataset_path)
+
+    
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     
     for step in range(num_train_steps):
