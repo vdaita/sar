@@ -152,7 +152,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     timestamp = time.time()
 
-    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-embed={n_embed}-layer={n_layer}-head={n_head}-timestamp={timestamp}"
+    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-timestamp={timestamp}"
 
     wandb.init(
         project="sar-transformer",
@@ -219,10 +219,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     train_dataset.set_format(type="torch", columns=["tokens"])
     test_dataset.set_format(type="torch", columns=["tokens"])
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.95))
 
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8) # type: ignore
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8) # type: ignore
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8, shuffle=True) # type: ignore
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8, shuffle=True) # type: ignore
     
     train_iterator = itertools.cycle(train_dataloader)
     test_iterator = itertools.cycle(test_dataloader)

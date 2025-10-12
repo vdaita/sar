@@ -2,13 +2,13 @@ mode: "overlap"
 vocab_size: 10000
 checkpoint_dir: "./checkpoints"
 
-max_length: 128
-batch_size: 32
+max_length: 256
+batch_size: 64
 num_train_steps: 32000
 eval_every: 100
 save_every: 1000
 
-lr: 0.0001
+lr: 0.001
 
 k: 8
 p_extend: 0.5
