@@ -12,7 +12,7 @@ save_every: 1000
 lr: 0.0003
 weight_decay_lambda: 0.01
 
-k: 8
+k: 4
 
 eval_num_batches: 32
 
