@@ -190,13 +190,6 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
     
     name = f"{mode}-arch={model_type}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-wd-lambda={weight_decay_lambda}-timestamp={unix_millis}"
-
-    wandb.init(
-        project="sar-transformer",
-        config=configs,
-        name=name
-    )
-
     tokenizer = get_tokenizer()
 
 
@@ -220,9 +213,14 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         )
         model = LlamaForCausalLM(config)
     elif model_type == "gpt-neo":
+        if n_layer % 2 == 1:
+            raise ValueError("gpt-neo models must have an even number of layers")
+
         config = GPTNeoConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_length,
+            attention_layers=[[["global", "local"], n_layer // 2]],
+            window_size=max_length,
             hidden_size=n_embed,
             num_layers=n_layer,
             num_heads=n_head,
@@ -283,6 +281,13 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     
     train_iterator = itertools.cycle(train_dataloader)
     test_iterator = itertools.cycle(test_dataloader)
+    
+    # move wandb initialization here so that you don't accidentally get runs when you crash above
+    wandb.init(
+        project="sar-transformer",
+        config=configs,
+        name=name
+    )
 
     for step in tqdm(range(num_train_steps), desc="Train Step"):
         start_time_train = time.time()
