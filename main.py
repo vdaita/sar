@@ -178,9 +178,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         n_head=n_head,
         bos_token_id=1,
         eos_token_id=2,
-        resid_pdrop=0.1,
-        attn_pdrop=0.1,
-        embd_pdrop=0.1
+        # resid_pdrop=0.1,
+        # attn_pdrop=0.1,
+        # embd_pdrop=0.1
     )
 
     model = GPT2LMHeadModel(config)
@@ -247,7 +247,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         batch_size, seq_len = input_ids.shape
         expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
         expanded_attention_mask = expanded_attention_mask.to(device)
-        outputs = model(input_ids=input_ids[:, :-1], attention_mask=expanded_attention_mask[:, :-1], labels=input_ids[:, 1:])
+        outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask, labels=input_ids)
         loss = outputs.loss
 
         # perform a training step
@@ -278,7 +278,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
                 expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
                 expanded_attention_mask = expanded_attention_mask.to(device)
                 with torch.no_grad():
-                    eval_outputs = model(input_ids=eval_input_ids[:, :-1], attention_mask=expanded_attention_mask, labels=eval_input_ids[:, 1:])
+                    eval_outputs = model(input_ids=eval_input_ids, attention_mask=expanded_attention_mask, labels=eval_input_ids)
                     eval_loss = eval_outputs.loss
                     eval_losses.append(eval_loss)
 
