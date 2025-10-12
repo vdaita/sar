@@ -10,7 +10,7 @@ def generate_glue_attention_mask(seq_len: int, k: int) -> Tensor:
             mask[i, stride_positions] = 1
         else:
             last_stride = (i // k) * k
-            next_stride: int = min(last_stride + k, seq_len)
+            next_stride: int = min(last_stride + k, seq_len - 1)
             intermediate_positions = torch.arange(start=last_stride, end=i + 1)
             mask[i, intermediate_positions] = 1
             mask[i, next_stride] = 1

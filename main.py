@@ -1,13 +1,13 @@
 import torch
 from torch import nn, Tensor
 # from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
-from transformers import LlamaConfig, LlamaForCausalLM, GPT2Tokenizer
+from transformers import LlamaConfig, LlamaForCausalLM, GPT2Tokenizer, GPTNeoConfig, GPTNeoForCausalLM
 from datasets import load_dataset
 import datasets
 from rich import print
 from rich.table import Table
 from rich.console import Console
-from attention_masks import generate_sar_attention_mask, generate_overlap_attention_mask, generate_default_attention_mask
+from attention_masks import generate_sar_attention_mask, generate_overlap_attention_mask, generate_default_attention_mask, generate_glue_attention_mask
 import typer
 import os
 import time
@@ -56,11 +56,14 @@ def sample_masks(seq_len: int = 32, k: int = 4, p_extend: float = 0.5, extend_k:
     sar_mask = generate_sar_attention_mask(seq_len, k)
     overlap_mask = generate_overlap_attention_mask(seq_len, k, p_extend, extend_k)
     default_mask = generate_default_attention_mask(seq_len)
+    glue_mask = generate_glue_attention_mask(seq_len, k)
 
-    sar_mask, overlap_mask, default_mask = sar_mask.int(), overlap_mask.int(), default_mask.int()
-    sar_mask, overlap_mask, default_mask = tensor_to_table(sar_mask), tensor_to_table(overlap_mask), tensor_to_table(default_mask)
+    sar_mask, overlap_mask, default_mask, glue_mask = sar_mask.int(), overlap_mask.int(), default_mask.int(), glue_mask.int()
+    sar_mask, overlap_mask, default_mask, glue_mask = tensor_to_table(sar_mask), tensor_to_table(overlap_mask), tensor_to_table(default_mask), tensor_to_table(glue_mask)
 
     console = Console()
+    console.print("[bold underline]Glue Attention Mask:[/bold underline]")
+    console.print(glue_mask)
     console.print("[bold underline]SAR Attention Mask:[/bold underline]")
     console.print(sar_mask)
     console.print("\n[bold underline]Overlap Attention Mask:[/bold underline]")
@@ -87,20 +90,36 @@ def test_model(conf_path: str, checkpoint_path: str):
     n_head = configs.get("n_head")
 
     tokenizer = get_tokenizer()
+    model_type = configs.get("base_model", "llama")
 
-    config = LlamaConfig(
-        vocab_size=vocab_size,
-        max_position_embeddings=max_length,
-        hidden_size=n_embd,
-        intermediate_size=3 * n_embd,
-        num_hidden_layers=n_layer,
-        num_attention_heads=n_head,
-        num_key_value_heads=n_head,
-        bos_token_id=tokenizer.bos_token_id,
-        eos_token_id=tokenizer.eos_token_id
-    )
-
-    model = LlamaForCausalLM(config)
+    if model_type == "llama":
+        config = LlamaConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_length,
+            hidden_size=n_embd,
+            intermediate_size=3 * n_embd,
+            num_hidden_layers=n_layer,
+            num_attention_heads=n_head,
+            num_key_value_heads=n_head,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id
+        )
+        model = LlamaForCausalLM(config)
+    elif model_type == "gpt-neo":
+        config = GPTNeoConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_length,
+            hidden_size=n_embd,
+            num_layers=n_layer,
+            num_heads=n_head,
+            intermediate_size=3 * n_embd,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id
+        )
+        model = GPTNeoForCausalLM(config)
+    else:
+        raise ValueError("Your model type can only either be llama (default) or gpt-neo.")
+    
     model.load_state_dict(torch.load(checkpoint_path))
     model.eval()
 
@@ -165,11 +184,12 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     num_warmup_steps = configs.get("num_warmup_steps")
 
     eval_num_batches = configs.get("eval_num_batches")
+    model_type = configs.get("base_model", "llama")
 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
     
-    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-wd-lambda={weight_decay_lambda}-timestamp={unix_millis}"
+    name = f"{mode}-arch={model_type}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-wd-lambda={weight_decay_lambda}-timestamp={unix_millis}"
 
     wandb.init(
         project="sar-transformer",
@@ -186,19 +206,34 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         yaml.safe_dump(configs, f)
 
     # metrics: train loss, eval loss, eval ppl, time per step
-    config = LlamaConfig(
-        vocab_size=vocab_size,
-        max_position_embeddings=max_length,
-        hidden_size=n_embed,
-        intermediate_size=3 * n_embed,
-        num_hidden_layers=n_layer,
-        num_attention_heads=n_head,
-        num_key_value_heads=n_head,
-        bos_token_id=tokenizer.bos_token_id,
-        eos_token_id=tokenizer.eos_token_id
-    )
-
-    model = LlamaForCausalLM(config)
+    if model_type == "llama":
+        config = LlamaConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_length,
+            hidden_size=n_embed,
+            intermediate_size=3 * n_embed,
+            num_hidden_layers=n_layer,
+            num_attention_heads=n_head,
+            num_key_value_heads=n_head,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id
+        )
+        model = LlamaForCausalLM(config)
+    elif model_type == "gpt-neo":
+        config = GPTNeoConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_length,
+            hidden_size=n_embed,
+            num_layers=n_layer,
+            num_heads=n_head,
+            intermediate_size=3 * n_embed,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id
+        )
+        model = GPTNeoForCausalLM(config)
+    else:
+        raise ValueError("Your model type can only either be llama (default) or gpt-neo.")
+    
     
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
@@ -258,6 +293,8 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             attention_mask = generate_overlap_attention_mask(max_length, k=k, p_extend=p_extend, extend_k=extend_k)
         elif mode == "base":
             attention_mask = generate_default_attention_mask(max_length)
+        elif mode == "glue":
+            attention_mask = generate_glue_attention_mask(max_length, k=k)
         else:
             raise ValueError(f"Unknown mode for attention mask: {mode}")
 
