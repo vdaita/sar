@@ -151,6 +151,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     eval_every = configs.get("eval_every")
     save_every = configs.get("save_every")
     lr = configs.get("lr")
+    weight_decay_lambda = configs.get("weight_decay_lambda")
 
     k = configs.get("k")
     p_extend = configs.get("p_extend")
@@ -167,7 +168,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
     
-    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-timestamp={unix_millis}"
+    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-wd-lambda={weight_decay_lambda}-timestamp={unix_millis}"
 
     wandb.init(
         project="sar-transformer",
@@ -207,7 +208,6 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         device = torch.device('cuda')
 
     model = model.to(device) # type: ignore
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
     train_dataset = load_dataset("roneneldan/TinyStories", split="train")
     test_dataset = load_dataset("roneneldan/TinyStories",split="validation")
@@ -235,7 +235,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     train_dataset.set_format(type="torch", columns=["tokens"])
     test_dataset.set_format(type="torch", columns=["tokens"])
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.95))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=weight_decay_lambda)
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=num_warmup_steps,
@@ -277,12 +277,13 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         # perform a training step
         optimizer.zero_grad()
         loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         scheduler.step()
     
         end_time_train = time.time()
 
-        wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train), "train/lr": scheduler.get_last_lr()[0]}, step=step)
+        wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train), "train/lr": scheduler.get_last_lr()[0], "train/grad_norm": grad_norm.item()}, step=step)
         if step % 50 == 0:
             print(f"Step {step}: train loss {loss.item()}")
 
@@ -301,7 +302,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
                 # print("Eval input ids shape: ", eval_input_ids.shape)
                 
                 eval_labels = eval_input_ids.clone()
-                eval_labels[eval_labels == tokenizer.pad_token_id] = -100
+                eval_labels[eval_input_ids == tokenizer.pad_token_id] = -100
 
                 batch_size, seq_len = eval_input_ids.shape
                 expanded_attention_mask = expand_attention_mask(attention_mask, n_head, batch_size)
