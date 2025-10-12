@@ -16,6 +16,7 @@ from typing import Dict
 import time
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+import itertools
 
 app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
@@ -222,6 +223,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8) # type: ignore
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8) # type: ignore
+    
+    train_iterator = itertools.cycle(train_dataloader)
+    test_iterator = itertools.cycle(test_dataloader)
 
     for step in tqdm(range(num_train_steps), desc="Train Step"):
         start_time_train = time.time()
@@ -236,28 +240,25 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             raise ValueError(f"Unknown mode for attention mask: {mode}")
 
         model.train()
-        input_ids: Tensor = next(iter(train_dataloader))["tokens"]
+        input_ids: Tensor = next(train_iterator)["tokens"]
         input_ids = input_ids.to(device)
         # print("Input ids: ", input_ids.shape)
 
-        losses = []
         batch_size, seq_len = input_ids.shape
         expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
         expanded_attention_mask = expanded_attention_mask.to(device)
         outputs = model(input_ids=input_ids[:, :-1], attention_mask=expanded_attention_mask[:, :-1], labels=input_ids[:, 1:])
         loss = outputs.loss
-        losses.append(loss)
 
         # perform a training step
-        joint_loss = torch.stack(losses).mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         end_time_train = time.time()
 
-        wandb.log({"train/loss": joint_loss.item(), "train/step_timer": (end_time_train - start_time_train)}, step=step)
-        print(f"Step {step}: train loss {joint_loss.item()}")
+        wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train)}, step=step)
+        print(f"Step {step}: train loss {loss.item()}")
 
         if step % eval_every == 0:
             start_time_eval = time.time()
@@ -269,7 +270,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
             eval_losses = []
             for _ in range(eval_num_batches):
-                eval_input_ids = next(iter(test_dataloader))["tokens"]
+                eval_input_ids = next(test_iterator)["tokens"]
                 eval_input_ids = eval_input_ids.to(device)
                 # print("Eval input ids shape: ", eval_input_ids.shape)
 
