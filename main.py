@@ -44,7 +44,7 @@ def expand_attention_mask(attention_mask: torch.Tensor, num_heads: int,  batch_s
         .unsqueeze(0)
         .expand(num_heads, -1, -1)
         .unsqueeze(0)
-        .expand(batch_size, -1, -1)
+        .expand(batch_size, -1, -1, -1)
     )
 
 @app.command()
