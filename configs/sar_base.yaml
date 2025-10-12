@@ -14,6 +14,6 @@ k: 8
 
 eval_num_batches: 4
 
-n_embed: 128
-n_layer: 4
-n_head: 8
+n_embed: 256
+n_layer: 8
+n_head: 16
