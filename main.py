@@ -17,9 +17,10 @@ import time
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import itertools
+from transformers import get_cosine_schedule_with_warmup
 
 app = typer.Typer()
-TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
+TOKENIZER_NAME = "roneneldan/TinyStories"
 
 def get_tokenizer():
     tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
@@ -147,12 +148,14 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     n_embed = configs.get("n_embed")
     n_layer = configs.get("n_layer")
     n_head = configs.get("n_head")
+    
+    num_warmup_steps = configs.get("num_warmup_steps")
 
     eval_num_batches = configs.get("eval_num_batches")
 
     timestamp = time.time()
 
-    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-timestamp={timestamp}"
+    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-timestamp={timestamp}"
 
     wandb.init(
         project="sar-transformer",
@@ -222,6 +225,11 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     test_dataset.set_format(type="torch", columns=["tokens"])
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.95))
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_train_steps
+    )
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8, shuffle=True) # type: ignore
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8, shuffle=True) # type: ignore
@@ -256,10 +264,11 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         end_time_train = time.time()
 
-        wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train)}, step=step)
+        wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train), "train/lr": scheduler.get_last_lr()[0]}, step=step)
         if step % 50 == 0:
             print(f"Step {step}: train loss {loss.item()}")
 
@@ -268,7 +277,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             model.eval()
 
             prompt = "Once upon a time"
-            sample = model.generate(**tokenizer(prompt, return_tensors="pt").to(device), max_length=64)
+            sample = model.generate(**tokenizer(prompt, return_tensors="pt").to(device), max_length=256, pad_token_id=tokenizer.pad_token_id)
             print(tokenizer.decode(sample[0]))
 
             eval_losses = []
