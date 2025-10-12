@@ -84,8 +84,8 @@ def test_model(conf_path: str, checkpoint_path: str):
         n_embd=n_embd,
         n_layer=n_layer,
         n_head=n_head,
-        bos_token_id=1,
-        eos_token_id=2
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id
     )
 
     model = GPT2LMHeadModel(config)
@@ -252,12 +252,15 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         model.train()
         input_ids: Tensor = next(train_iterator)["tokens"]
         input_ids = input_ids.to(device)
+        
+        labels = input_ids.clone()
+        labels[input_ids == tokenizer.pad_token_id] = -100
         # print("Input ids: ", input_ids.shape)
 
         batch_size, seq_len = input_ids.shape
         expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
         expanded_attention_mask = expanded_attention_mask.to(device)
-        outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask, labels=input_ids)
+        outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask, labels=labels)
         loss = outputs.loss
 
         # perform a training step
@@ -285,6 +288,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
                 eval_input_ids = next(test_iterator)["tokens"]
                 eval_input_ids = eval_input_ids.to(device)
                 # print("Eval input ids shape: ", eval_input_ids.shape)
+                
+                eval_labels = eval_input_ids.clone()
+                eval_labels[input_ids == tokenizer.pad_token_id] = -100
 
                 batch_size, seq_len = eval_input_ids.shape
                 expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
