@@ -1,6 +1,7 @@
 import torch
 from torch import nn, Tensor
-from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
+# from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
+from transformers import LlamaConfig, LlamaForCausalLM, GPT2Tokenizer
 from datasets import load_dataset
 import datasets
 from rich import print
@@ -39,6 +40,8 @@ def tensor_to_table(tensor, one_color="bold red", zero_color="dim"):
     return table
 
 def expand_attention_mask(attention_mask: torch.Tensor, num_heads: int,  batch_size: int) -> torch.Tensor:
+    attention_mask[attention_mask == 0] = -1e10
+    attention_mask[attention_mask == 1] = 0
     return (
         attention_mask
         .unsqueeze(0)
@@ -84,17 +87,19 @@ def test_model(conf_path: str, checkpoint_path: str):
 
     tokenizer = get_tokenizer()
 
-    config = GPT2Config(
+    config = LlamaConfig(
         vocab_size=vocab_size,
-        n_positions=max_length,
-        n_embd=n_embd,
-        n_layer=n_layer,
-        n_head=n_head,
+        max_position_embeddings=max_length,
+        hidden_size=n_embd,
+        intermediate_size=3 * n_embd,
+        num_hidden_layers=n_layer,
+        num_attention_heads=n_head,
+        num_key_value_heads=n_head,
         bos_token_id=tokenizer.bos_token_id,
         eos_token_id=tokenizer.eos_token_id
     )
 
-    model = GPT2LMHeadModel(config)
+    model = LlamaForCausalLM(config)
     model.load_state_dict(torch.load(checkpoint_path))
     model.eval()
 
@@ -179,20 +184,19 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         yaml.safe_dump(configs, f)
 
     # metrics: train loss, eval loss, eval ppl, time per step
-    config = GPT2Config(
+    config = LlamaConfig(
         vocab_size=vocab_size,
-        n_positions=max_length,
-        n_embd=n_embed,
-        n_layer=n_layer,
-        n_head=n_head,
-        bos_token_id=1,
-        eos_token_id=2,
-        # resid_pdrop=0.1,
-        # attn_pdrop=0.1,
-        # embd_pdrop=0.1
+        max_position_embeddings=max_length,
+        hidden_size=n_embd,
+        intermediate_size=3 * n_embd,
+        num_hidden_layers=n_layer,
+        num_attention_heads=n_head,
+        num_key_value_heads=n_head,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id
     )
 
-    model = GPT2LMHeadModel(config)
+    model = LlamaForCausalLM(config)
     
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
