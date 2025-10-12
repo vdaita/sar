@@ -184,6 +184,8 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     )
 
     model = GPT2LMHeadModel(config)
+    
+    print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
     device = torch.device('cpu')
     if torch.mps.is_available():
@@ -258,7 +260,8 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         end_time_train = time.time()
 
         wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train)}, step=step)
-        print(f"Step {step}: train loss {loss.item()}")
+        if step % 50 == 0:
+            print(f"Step {step}: train loss {loss.item()}")
 
         if step % eval_every == 0:
             start_time_eval = time.time()
