@@ -307,7 +307,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
                 expanded_attention_mask = expand_attention_mask(attention_mask, n_head, batch_size)
                 expanded_attention_mask = expanded_attention_mask.to(device)
                 with torch.no_grad():
-                    eval_outputs = model(input_ids=eval_input_ids, attention_mask=expanded_attention_mask, labels=eval_input_ids)
+                    eval_outputs = model(input_ids=eval_input_ids, attention_mask=expanded_attention_mask, labels=eval_labels)
                     eval_loss = eval_outputs.loss
                     eval_losses.append(eval_loss)
 
