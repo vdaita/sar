@@ -219,7 +219,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         config = GPTNeoConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_length,
-            attention_layers=[[["global", "local"], n_layer // 2]],
+            attention_types=[[["global", "local"], n_layer // 2]],
             window_size=max_length,
             hidden_size=n_embed,
             num_layers=n_layer,
