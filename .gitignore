@@ -11,3 +11,4 @@ wheels/
 
 # File stuff
 checkpoints/
+wandb/

@@ -14,6 +14,8 @@ import yaml
 import wandb
 from typing import Dict
 import time
+from tqdm import tqdm
+from torch.utils.data import DataLoader
 
 app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
@@ -33,12 +35,6 @@ def tensor_to_table(tensor, one_color="bold red", zero_color="dim"):
         ]
         table.add_row(*colored_row)
     return table
-
-def get_batches_from_dataset(dataset, batch_size: int, num_batches: int):
-    for i in range(num_batches):
-        batch = dataset.select(range(i * batch_size, (i + 1) * batch_size))
-        batch = torch.stack([tensor for tensor in batch["tokens"]])
-        yield batch
 
 def expand_attention_mask(attention_mask: torch.Tensor, batch_size: int) -> torch.Tensor:
     return attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
@@ -147,15 +143,20 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     p_extend = configs.get("p_extend")
     extend_k = configs.get("extend_k")
 
-    eval_num_batches = configs.get("eval_num_batches")
-
     n_embed = configs.get("n_embed")
     n_layer = configs.get("n_layer")
     n_head = configs.get("n_head")
 
+    eval_num_batches = configs.get("eval_num_batches")
+
+    timestamp = time.time()
+
+    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-embed={n_embed}-layer={n_layer}-head={n_head}-timestamp={timestamp}"
+
     wandb.init(
         project="sar-transformer",
-        config=configs
+        config=configs,
+        name=name
     )
 
     tokenizer = get_tokenizer()
@@ -175,10 +176,22 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         n_layer=n_layer,
         n_head=n_head,
         bos_token_id=1,
-        eos_token_id=2
+        eos_token_id=2,
+        resid_pdrop=0.1,
+        attn_pdrop=0.1,
+        embd_pdrop=0.1
     )
 
     model = GPT2LMHeadModel(config)
+
+    device = torch.device('cpu')
+    if torch.mps.is_available():
+        device = torch.device('mps')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+
+    model = model.to(device) # type: ignore
+
     train_dataset = load_dataset("roneneldan/TinyStories", split="train")
     test_dataset = load_dataset("roneneldan/TinyStories",split="validation")
 
@@ -194,15 +207,23 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         test_dataset = datasets.load_from_disk(test_dataset_path)
     else:
         print("Preprocessing datasets and saving to disk...")
-        train_dataset = train_dataset.map(preprocess_dataset, batched=True, num_proc=8)
-        test_dataset = test_dataset.map(preprocess_dataset, batched=True, num_proc=8)
+        train_dataset = train_dataset.map(preprocess_dataset, batched=True, num_proc=8) # type: ignore
+        test_dataset = test_dataset.map(preprocess_dataset, batched=True, num_proc=8) # type: ignore
+
         train_dataset.save_to_disk(train_dataset_path)
         test_dataset.save_to_disk(test_dataset_path)
 
+    train_dataset, test_dataset = train_dataset.select_columns(["tokens"]), test_dataset.select_columns(["tokens"]) # type: ignore
+
+    train_dataset.set_format(type="torch", columns=["tokens"])
+    test_dataset.set_format(type="torch", columns=["tokens"])
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    
-    for step in range(num_train_steps):
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8) # type: ignore
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8) # type: ignore
+
+    for step in tqdm(range(num_train_steps), desc="Train Step"):
         start_time_train = time.time()
 
         if mode == "sar":
@@ -215,20 +236,22 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             raise ValueError(f"Unknown mode for attention mask: {mode}")
 
         model.train()
-        batches = next(get_batches_from_dataset(train_dataset, batch_size=batch_size, num_batches=1))
+        input_ids: Tensor = next(iter(train_dataloader))["tokens"]
+        input_ids = input_ids.to(device)
+        # print("Input ids: ", input_ids.shape)
 
         losses = []
-        for input_ids in batches:
-            batch_size, seq_len = input_ids.shape
-            expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
-            outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask, labels=input_ids)
-            loss = outputs.loss
-            losses.append(loss)
+        batch_size, seq_len = input_ids.shape
+        expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
+        expanded_attention_mask = expanded_attention_mask.to(device)
+        outputs = model(input_ids=input_ids[:, :-1], attention_mask=expanded_attention_mask[:, :-1], labels=input_ids[:, 1:])
+        loss = outputs.loss
+        losses.append(loss)
 
         # perform a training step
         joint_loss = torch.stack(losses).mean()
-        loss.backward()
         optimizer.zero_grad()
+        loss.backward()
         optimizer.step()
 
         end_time_train = time.time()
@@ -239,13 +262,22 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         if step % eval_every == 0:
             start_time_eval = time.time()
             model.eval()
+
+            prompt = "Once upon a time"
+            sample = model.generate(**tokenizer(prompt, return_tensors="pt").to(device), max_length=64)
+            print(tokenizer.decode(sample[0]))
+
             eval_losses = []
-            eval_batches = next(get_batches_from_dataset(test_dataset, batch_size=batch_size, num_batches=eval_num_batches))
-            for eval_input_ids in eval_batches:
+            for _ in range(eval_num_batches):
+                eval_input_ids = next(iter(test_dataloader))["tokens"]
+                eval_input_ids = eval_input_ids.to(device)
+                # print("Eval input ids shape: ", eval_input_ids.shape)
+
                 batch_size, seq_len = eval_input_ids.shape
                 expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
+                expanded_attention_mask = expanded_attention_mask.to(device)
                 with torch.no_grad():
-                    eval_outputs = model(input_ids=eval_input_ids, attention_mask=expanded_attention_mask, labels=eval_input_ids)
+                    eval_outputs = model(input_ids=eval_input_ids[:, :-1], attention_mask=expanded_attention_mask, labels=eval_input_ids[:, 1:])
                     eval_loss = eval_outputs.loss
                     eval_losses.append(eval_loss)
 
@@ -257,11 +289,13 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             print(f"Step {step}: eval loss {joint_eval_loss.item()}, eval ppl {eval_ppl.item()}")
 
         if step % save_every == 0:
-            model.save_pretrained(f"{model_folder}/step-{step}")
-            print(f"Saved model checkpoint at step {step} to {model_folder}/step-{step}")
+            save_path = os.path.join(model_folder, f"step-{step}")
+            model.save_pretrained(save_path)
+            print(f"Saved model checkpoint at step {step} to {save_path}")
 
-    model.save_pretrained(f"{model_folder}/final")
-    print(f"Saved final model checkpoint to {model_folder}/final")
+    final_save_path = os.path.join(model_folder, "final")
+    model.save_pretrained(final_save_path)
+    print(f"Saved final model checkpoint to {final_save_path}")
     wandb.finish()
 
 if __name__ == "__main__":
