@@ -1,5 +1,5 @@
 mode: "base"
-vocab_size: 50256
+vocab_size: 10000
 checkpoint_dir: "./checkpoints"
 
 max_length: 256
@@ -9,7 +9,7 @@ num_warmup_steps: 1000
 eval_every: 500
 save_every: 1000
 
-lr: 0.001
+lr: 0.0001
 eval_num_batches: 4
 
 n_embed: 256

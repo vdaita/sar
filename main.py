@@ -20,7 +20,7 @@ import itertools
 from transformers import get_cosine_schedule_with_warmup
 
 app = typer.Typer()
-TOKENIZER_NAME = "roneneldan/TinyStories"
+TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
 
 def get_tokenizer():
     tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
@@ -38,8 +38,14 @@ def tensor_to_table(tensor, one_color="bold red", zero_color="dim"):
         table.add_row(*colored_row)
     return table
 
-def expand_attention_mask(attention_mask: torch.Tensor, batch_size: int) -> torch.Tensor:
-    return attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
+def expand_attention_mask(attention_mask: torch.Tensor, num_heads: int,  batch_size: int) -> torch.Tensor:
+    return (
+        attention_mask
+        .unsqueeze(0)
+        .expand(num_heads, -1, -1)
+        .unsqueeze(0)
+        .expand(batch_size, -1, -1)
+    )
 
 @app.command()
 def sample_masks(seq_len: int = 32, k: int = 4, p_extend: float = 0.5, extend_k: int = 2):
@@ -153,9 +159,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     eval_num_batches = configs.get("eval_num_batches")
 
-    timestamp = time.time()
-
-    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-timestamp={timestamp}"
+    unix_millis = int(round(time.time() * 1000))
+    model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
+    
+    name = f"{mode}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-timestamp={unix_millis}"
 
     wandb.init(
         project="sar-transformer",
@@ -165,8 +172,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     tokenizer = get_tokenizer()
 
-    unix_millis = int(round(time.time() * 1000))
-    model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
+
     os.makedirs(model_folder, exist_ok=True)
 
     with open(f"{model_folder}/config.yaml", "w") as f:
@@ -197,6 +203,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         device = torch.device('cuda')
 
     model = model.to(device) # type: ignore
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
     train_dataset = load_dataset("roneneldan/TinyStories", split="train")
     test_dataset = load_dataset("roneneldan/TinyStories",split="validation")
@@ -258,7 +265,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         # print("Input ids: ", input_ids.shape)
 
         batch_size, seq_len = input_ids.shape
-        expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
+        expanded_attention_mask = expand_attention_mask(attention_mask, n_head, batch_size)
         expanded_attention_mask = expanded_attention_mask.to(device)
         outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask, labels=labels)
         loss = outputs.loss
@@ -268,7 +275,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         loss.backward()
         optimizer.step()
         scheduler.step()
-
+    
         end_time_train = time.time()
 
         wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train), "train/lr": scheduler.get_last_lr()[0]}, step=step)
@@ -290,10 +297,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
                 # print("Eval input ids shape: ", eval_input_ids.shape)
                 
                 eval_labels = eval_input_ids.clone()
-                eval_labels[input_ids == tokenizer.pad_token_id] = -100
+                eval_labels[eval_labels == tokenizer.pad_token_id] = -100
 
                 batch_size, seq_len = eval_input_ids.shape
-                expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
+                expanded_attention_mask = expand_attention_mask(attention_mask, n_head, batch_size)
                 expanded_attention_mask = expanded_attention_mask.to(device)
                 with torch.no_grad():
                     eval_outputs = model(input_ids=eval_input_ids, attention_mask=expanded_attention_mask, labels=eval_input_ids)
