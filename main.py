@@ -187,8 +187,8 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     config = LlamaConfig(
         vocab_size=vocab_size,
         max_position_embeddings=max_length,
-        hidden_size=n_embd,
-        intermediate_size=3 * n_embd,
+        hidden_size=n_embed,
+        intermediate_size=3 * n_embed,
         num_hidden_layers=n_layer,
         num_attention_heads=n_head,
         num_key_value_heads=n_head,
