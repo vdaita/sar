@@ -40,10 +40,11 @@ def tensor_to_table(tensor, one_color="bold red", zero_color="dim"):
     return table
 
 def expand_attention_mask(attention_mask: torch.Tensor, num_heads: int,  batch_size: int) -> torch.Tensor:
-    attention_mask[attention_mask == 0] = -1e10
-    attention_mask[attention_mask == 1] = 0
+    mask = attention_mask.clone()
+    mask[mask == 0] = -1e10
+    mask[mask == 1] = 0
     return (
-        attention_mask
+        mask
         .unsqueeze(0)
         .expand(num_heads, -1, -1)
         .unsqueeze(0)
