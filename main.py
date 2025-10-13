@@ -23,6 +23,8 @@ import transformers
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 from transformers.models.llama.modeling_llama import repeat_kv
+import inspect
+import types
 
 app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
@@ -128,18 +130,11 @@ def no_causal_llama_eager_attn_forward(
 
     return attn_output, attn_weights
 
-
-def monkeypatch_model():
-    transformers.models.gpt_neo.modeling_gpt_neo.GPTNeoSelfAttention._attn = _no_causal_gpt_neo_attn
-    transformers.models.llama.modeling_llama.eager_attention_forward = no_causal_llama_eager_attn_forward
-
 @app.command()
 def test_model(conf_path: str, checkpoint_path: str):
     with open(conf_path, "r") as f:
         configs = yaml.safe_load(f)
         
-    monkeypatch_model()
-
     mode = configs.get("mode")
     vocab_size = configs.get("vocab_size")
     max_length = configs.get("max_length")
@@ -169,6 +164,8 @@ def test_model(conf_path: str, checkpoint_path: str):
             eos_token_id=tokenizer.eos_token_id
         )
         model = LlamaForCausalLM(config)
+        
+        transformers.models.llama.modeling_llama.eager_attention_forward = no_causal_llama_eager_attn_forward
     elif model_type == "gpt-neo":
         config = GPTNeoConfig(
             vocab_size=vocab_size,
@@ -181,9 +178,13 @@ def test_model(conf_path: str, checkpoint_path: str):
             eos_token_id=tokenizer.eos_token_id
         )
         model = GPTNeoForCausalLM(config)
+        
+        # perform monkeypatch
+        for block in model.transformer.h:
+            block.attn.attention._attn = types.MethodType(_no_causal_gpt_neo_attn, block.attn.attention)
     else:
         raise ValueError("Your model type can only either be llama (default) or gpt-neo.")
-    
+
     model.load_state_dict(torch.load(checkpoint_path))
     model.eval()
 
