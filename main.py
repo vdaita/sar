@@ -13,12 +13,16 @@ import os
 import time
 import yaml
 import wandb
-from typing import Dict
+from typing import Dict, Optional
 import time
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import itertools
 from transformers import get_cosine_schedule_with_warmup
+import transformers
+from transformers.processing_utils import Unpack
+from transformers.utils import TransformersKwargs
+from transformers.models.llama.modeling_llama import repeat_kv
 
 app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
@@ -71,10 +75,70 @@ def sample_masks(seq_len: int = 32, k: int = 4, p_extend: float = 0.5, extend_k:
     console.print("\n[bold underline]Default Attention Mask:[/bold underline]")
     console.print(default_mask)
 
+def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None):
+    # Keep the attention weights computation in fp32 to avoid overflow issues
+    query = query.to(torch.float32)
+    key = key.to(torch.float32)
+
+    attn_weights = torch.matmul(query, key.transpose(-1, -2))
+
+    # Apply sliding window masking for local attention layers
+    query_length, key_length = query.size(-2), key.size(-2)
+    causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+    mask_value = torch.finfo(attn_weights.dtype).min
+    # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+    # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+    mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
+    attn_weights = torch.where(causal_mask, attn_weights, mask_value)
+
+    if attention_mask is not None:  # no matter the length, we just slice it
+        attention_mask_sliced = attention_mask[:, :, :, : key.shape[-2]]
+        attn_weights = attention_mask_sliced
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+    attn_weights = attn_weights.to(value.dtype)
+    attn_weights = self.attn_dropout(attn_weights)
+
+    attn_output = torch.matmul(attn_weights, value)
+
+    return attn_output, attn_weights
+    
+def no_causal_llama_eager_attn_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    **kwargs: Unpack[TransformersKwargs],
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if attention_mask is not None:
+        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+        attn_weights = attn_weights + causal_mask
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
+
+
+def monkeypatch_model():
+    transformers.models.gpt_neo.modeling_gpt_neo.GPTNeoSelfAttention._attn = _no_causal_gpt_neo_attn
+    transformers.models.llama.modeling_llama.eager_attention_forward = no_causal_llama_eager_attn_forward
+
 @app.command()
 def test_model(conf_path: str, checkpoint_path: str):
     with open(conf_path, "r") as f:
         configs = yaml.safe_load(f)
+        
+    monkeypatch_model()
 
     mode = configs.get("mode")
     vocab_size = configs.get("vocab_size")
@@ -159,6 +223,8 @@ def test_model(conf_path: str, checkpoint_path: str):
 def train_model(conf_path: str): # you can train this in default, sar, overlap. however, the eval loop for both sar and overlap will be sar
     with open(conf_path, "r") as f:
         configs = yaml.safe_load(f)
+        
+    monkeypatch_model()
 
     mode = configs.get("mode")
     vocab_size = configs.get("vocab_size")
@@ -226,13 +292,13 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             num_heads=n_head,
             intermediate_size=3 * n_embed,
             bos_token_id=tokenizer.bos_token_id,
-            eos_token_id=tokenizer.eos_token_id
+            eos_token_id=tokenizer.eos_token_id,
         )
         model = GPTNeoForCausalLM(config)
     else:
         raise ValueError("Your model type can only either be llama (default) or gpt-neo.")
-    
-    
+
+    model.set_attn_implementation('eager')
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
     device = torch.device('cpu')
