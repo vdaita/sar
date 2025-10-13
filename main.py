@@ -85,17 +85,9 @@ def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None):
     attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
     # Apply sliding window masking for local attention layers
-    query_length, key_length = query.size(-2), key.size(-2)
-    causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
-    mask_value = torch.finfo(attn_weights.dtype).min
-    # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
-    # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-    mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
-    attn_weights = torch.where(causal_mask, attn_weights, mask_value)
-
     if attention_mask is not None:  # no matter the length, we just slice it
         attention_mask_sliced = attention_mask[:, :, :, : key.shape[-2]]
-        attn_weights = attention_mask_sliced
+        attn_weights = attn_weights + attention_mask_sliced
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1)
     attn_weights = attn_weights.to(value.dtype)
