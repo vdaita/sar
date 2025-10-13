@@ -225,8 +225,6 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     with open(conf_path, "r") as f:
         configs = yaml.safe_load(f)
         
-    monkeypatch_model()
-
     mode = configs.get("mode")
     vocab_size = configs.get("vocab_size")
     checkpoint_dir = configs.get("checkpoint_dir")
