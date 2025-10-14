@@ -77,7 +77,7 @@ def sample_masks(seq_len: int = 32, k: int = 4, p_extend: float = 0.5, extend_k:
     console.print("\n[bold underline]Default Attention Mask:[/bold underline]")
     console.print(default_mask)
 
-def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None):
+def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None, head_mask=None):
     # Keep the attention weights computation in fp32 to avoid overflow issues
     query = query.to(torch.float32)
     key = key.to(torch.float32)
@@ -121,96 +121,6 @@ def no_causal_llama_eager_attn_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
-
-@app.command()
-def test_model(conf_path: str, checkpoint_path: str):
-    with open(conf_path, "r") as f:
-        configs = yaml.safe_load(f)
-        
-    mode = configs.get("mode")
-    vocab_size = configs.get("vocab_size")
-    max_length = configs.get("max_length")
-    batch_size = configs.get("batch_size")
-    k = configs.get("k")
-
-    p_extend = configs.get("p_extend")
-    extend_k = configs.get("extend_k")
-
-    n_embd = configs.get("n_embd")
-    n_layer = configs.get("n_layer")
-    n_head = configs.get("n_head")
-
-    tokenizer = get_tokenizer()
-    model_type = configs.get("base_model", "llama")
-
-    if model_type == "llama":
-        config = LlamaConfig(
-            vocab_size=vocab_size,
-            max_position_embeddings=max_length,
-            hidden_size=n_embd,
-            intermediate_size=3 * n_embd,
-            num_hidden_layers=n_layer,
-            num_attention_heads=n_head,
-            num_key_value_heads=n_head,
-            bos_token_id=tokenizer.bos_token_id,
-            eos_token_id=tokenizer.eos_token_id
-        )
-        model = LlamaForCausalLM(config)
-        
-        transformers.models.llama.modeling_llama.eager_attention_forward = no_causal_llama_eager_attn_forward
-    elif model_type == "gpt-neo":
-        config = GPTNeoConfig(
-            vocab_size=vocab_size,
-            max_position_embeddings=max_length,
-            hidden_size=n_embd,
-            num_layers=n_layer,
-            num_heads=n_head,
-            intermediate_size=3 * n_embd,
-            bos_token_id=tokenizer.bos_token_id,
-            eos_token_id=tokenizer.eos_token_id
-        )
-        model = GPTNeoForCausalLM(config)
-        
-        # perform monkeypatch
-        for block in model.transformer.h:
-            block.attn.attention._attn = types.MethodType(_no_causal_gpt_neo_attn, block.attn.attention)
-    else:
-        raise ValueError("Your model type can only either be llama (default) or gpt-neo.")
-
-    model.load_state_dict(torch.load(checkpoint_path))
-    model.eval()
-
-    example_prompts = [
-        "Once upon a time",
-        "In a galaxy far, far away",
-        "The quick brown fox",
-        "To be or not to be",
-        "In the beginning"
-    ]
-
-    for prompt in example_prompts:
-        inputs: Dict[str, Tensor] = tokenizer(prompt, return_tensors="pt", max_length=max_length, truncation=True, padding="max_length") # type: ignore
-        input_ids: Tensor = inputs["input_ids"]
-        batch_size, seq_len = input_ids.shape
-
-        if mode == "sar":
-            attention_mask = generate_sar_attention_mask(max_length, k=k)
-        elif mode == "overlap":
-            attention_mask = generate_overlap_attention_mask(max_length, k=k, p_extend=p_extend, extend_k=extend_k)
-        else:
-            attention_mask = generate_default_attention_mask(max_length)
-
-        expanded_attention_mask = expand_attention_mask(attention_mask, batch_size)
-
-        with torch.no_grad():
-            outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask)
-            logits = outputs.logits
-
-        predicted_id = torch.argmax(logits[:, -1, :], dim=-1)
-        predicted_token = tokenizer.decode(predicted_id)
-
-        print(f"[bold]Prompt:[/bold] {prompt}")
-        print(f"[bold]Predicted next token:[/bold] {predicted_token}\n")
 
 @app.command()
 def train_model(conf_path: str): # you can train this in default, sar, overlap. however, the eval loop for both sar and overlap will be sar
@@ -269,6 +179,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             eos_token_id=tokenizer.eos_token_id
         )
         model = LlamaForCausalLM(config)
+        model.set_attn_implementation('eager')
+        
+        transformers.models.llama.modeling_llama.eager_attention_forward = no_causal_llama_eager_attn_forward
     elif model_type == "gpt-neo":
         if n_layer % 2 == 1:
             raise ValueError("gpt-neo models must have an even number of layers")
@@ -286,10 +199,14 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             eos_token_id=tokenizer.eos_token_id,
         )
         model = GPTNeoForCausalLM(config)
+        model.set_attn_implementation('eager')
+        for block in model.transformer.h:
+            print(inspect.signature(block.attn.attention._attn))
+            block.attn.attention._attn = types.MethodType(_no_causal_gpt_neo_attn, block.attn.attention)
+
     else:
         raise ValueError("Your model type can only either be llama (default) or gpt-neo.")
 
-    model.set_attn_implementation('eager')
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
     device = torch.device('cpu')
