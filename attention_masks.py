@@ -12,13 +12,28 @@ class PreprocessResult:
     is_gist: Tensor
 
 def preprocess_gist_glue(x: Tensor, gist_token: int, k: int) -> PreprocessResult:
-    sar_result = preprocess_gist_sar(x, gist_token, k)
-    B, seq_len_new = sar_result.input_ids.shape
+    result = preprocess_gist_sar(x, gist_token, k)
+    B, seq_len_new = result.input_ids.shape
     for token in range(seq_len_new):
         if token % (k + 1) != 0:
             next_gist = token + (k + 1) - (token % (k + 1))
             if next_gist < seq_len_new:
                 sar_result.mask[:, token, next_gist] = 1 # note: the first dimension is batch
+
+    # add a new gist token at the end
+    result.is_gist = torch.cat( ( result.is_gist, torch.Tensor([1]).to(result.is_gist.device) ) )
+    result.mask[:, -1, result.is_gist] = 1
+
+    batch_gist_token = torch.Tensor([gist_token], dtype=torch.long)
+    batch_gist_token = batch_gist_token.unsqueeze(0).repeat(B, 1)
+    batch_gist_token = batch_gist_token.to(result.is_gist.device)
+
+    batch_gist_label_token = torch.Tensor([-100], dtype=torch.long)
+    batch_gist_label_token = batch_gist_label_token.unsqueeze(0).repeat(B, 1)
+    batch_gist_label_token = batch_gist_label_token.to(result.is_gist.device)
+
+    result.input_ids = torch.cat( ( result.input_ids, batch_gist_token ), dim=-1 )
+    result.labels = torch.cat( ( result.labels, batch_gist_label_token ), dim = -1 )
 
     return sar_result
 
@@ -36,12 +51,12 @@ def preprocess_gist_sar(x: Tensor, gist_token: int, k: int) -> PreprocessResult:
     shift_tokens = torch.repeat_interleave(shift_tokens, repeats=k)
     reg_tokens += shift_tokens
 
-    new_tokens = torch.zeros((B, T + num_gist_tokens), device=x.device)
+    new_tokens = torch.zeros((B, T + num_gist_tokens), device=x.device, dtype=torch.long)
     new_tokens[:, reg_tokens] = x
     new_tokens[:, gist_tokens] = gist_token
 
-    is_gist = torch.zeros((T + num_gist_tokens), device=x.device)
-    is_gist[gist_tokens] = 1
+    is_gist = torch.zeros((T + num_gist_tokens), device=x.device, dtype=torch.bool)
+    is_gist[gist_tokens] = True
 
     new_labels = new_tokens.clone()
     new_labels[new_labels == gist_token] = -100
