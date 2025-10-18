@@ -1,5 +1,5 @@
 mode: "base"
-vocab_size: 10000
+vocab_size: 10001
 checkpoint_dir: "./checkpoints"
 
 max_length: 256

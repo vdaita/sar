@@ -1,56 +1,67 @@
+from pydantic.networks import IPvAnyAddress
 from torch import nn, Tensor
 import torch
+from typing import Tuple
+from dataclasses import dataclass
 
-def generate_glue_attention_mask(seq_len: int, k: int) -> Tensor:
-    """Generates a lower triangular attention mask for causal attention."""
-    mask = torch.zeros((seq_len, seq_len))
-    for i in range(seq_len):
-        if i % k == 0:
-            stride_positions = torch.arange(start=0, end=i + 1, step=k)
-            mask[i, stride_positions] = 1
-        else:
-            last_stride = (i // k) * k
-            next_stride: int = min(last_stride + k, seq_len - 1)
-            intermediate_positions = torch.arange(start=last_stride, end=i + 1)
-            mask[i, intermediate_positions] = 1
-            mask[i, next_stride] = 1
-    return mask
+@dataclass
+class PreprocessResult:
+    mask: Tensor
+    input_ids: Tensor
+    labels: Tensor
+    is_gist: Tensor
 
-def generate_sar_attention_mask(seq_len: int, k: int) -> Tensor:
-    """Generates a lower triangular attention mask for causal attention."""
-    mask = torch.zeros((seq_len, seq_len))
-    for i in range(seq_len):
-        if i % k == 0:
-            stride_positions = torch.arange(start=0, end=i + 1, step=k)
-            mask[i, stride_positions] = 1
-        else:
-            last_stride = (i // k) * k
-            intermediate_positions = torch.arange(start=last_stride, end=i + 1)
-            mask[i, intermediate_positions] = 1
-    return mask
+def preprocess_gist_glue(x: Tensor, gist_token: int, k: int) -> PreprocessResult:
+    sar_result = preprocess_gist_sar(x, gist_token, k)
+    B, seq_len_new = sar_result.input_ids.shape
+    for token in range(seq_len_new):
+        if token % (k + 1) != 0:
+            next_gist = token + (k + 1) - (token % (k + 1))
+            if next_gist < seq_len_new:
+                sar_result.mask[:, token, next_gist] = 1 # note: the first dimension is batch
 
-def generate_overlap_attention_mask(seq_len: int, k: int, p_extend: float, extend_k: int) -> Tensor:
-    
-    mask = torch.zeros((seq_len, seq_len))
-    k_elements = torch.arange(start=0, end=seq_len, step=k)
-    mask[k_elements, k_elements] = 1
+    return sar_result
 
-    for block_start in range(0, seq_len, k):
-        extend_block = torch.rand(1).item() < p_extend
-        for mod_k in range(k):
-            i = block_start + mod_k
-            if mod_k == 0:
-                stride_positions = torch.arange(start=0, end=i + 1, step=k)
-                mask[i, stride_positions] = 1
-            elif mod_k < extend_k and extend_block:
-                intermediate_positions = torch.arange(start=max(0, i - mod_k - k), end=i + 1)
-                mask[i, intermediate_positions] = 1
-            else:
-                intermediate_positions = torch.arange(start=max(0, i - mod_k), end=i + 1)
-                mask[i, intermediate_positions] = 1
+def preprocess_gist_sar(x: Tensor, gist_token: int, k: int) -> PreprocessResult:
+    B, T = x.shape
 
-    return mask
+    assert T % k == 0, "must be divisible"
+    num_blocks = T // k
 
-def generate_default_attention_mask(seq_len: int) -> Tensor:
-    """Generates a standard lower triangular attention mask."""
-    return torch.tril(torch.ones((seq_len, seq_len)))
+    reg_tokens = torch.arange(T, device=x.device)
+
+    num_gist_tokens = num_blocks
+    gist_tokens = torch.arange(num_gist_tokens, device=x.device) * (k + 1)
+    shift_tokens = torch.arange(start=1, end=num_gist_tokens + 1, device=x.device)
+    shift_tokens = torch.repeat_interleave(shift_tokens, repeats=k)
+    reg_tokens += shift_tokens
+
+    new_tokens = torch.zeros((B, T + num_gist_tokens), device=x.device)
+    new_tokens[:, reg_tokens] = x
+    new_tokens[:, gist_tokens] = gist_token
+
+    is_gist = torch.zeros((T + num_gist_tokens), device=x.device)
+    is_gist[gist_tokens] = 1
+
+    new_labels = new_tokens.clone()
+    new_labels[new_labels == gist_token] = -100
+
+    mask = torch.zeros((T + num_gist_tokens, T + num_gist_tokens), device=x.device)
+    mask[:, gist_tokens] = 1
+    mask = mask.bool()
+    for token in reg_tokens:
+        closest_shift_token = token - (token % (k + 1)) # remove the remainder
+        mask[token, closest_shift_token:token + 1] = 1
+
+    mask = torch.tril(mask)
+
+    mask = mask.unsqueeze(0).repeat(B, 1, 1)
+
+    return PreprocessResult(mask=mask, input_ids=new_tokens, labels=new_labels, is_gist=is_gist)
+
+def preprocess_default_attention(x: Tensor) -> PreprocessResult:
+    B, T = x.shape
+    is_gist = torch.zeros(T, device=x.device)
+    mask = torch.tril(torch.ones((T, T)))
+    mask = mask.unsqueeze(0).repeat(B, 1, 1)
+    return PreprocessResult(mask=mask, input_ids=x, is_gist=is_gist, labels=x)

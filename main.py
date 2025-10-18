@@ -7,13 +7,13 @@ import datasets
 from rich import print
 from rich.table import Table
 from rich.console import Console
-from attention_masks import generate_sar_attention_mask, generate_overlap_attention_mask, generate_default_attention_mask, generate_glue_attention_mask
+from attention_masks import preprocess_default_attention, preprocess_gist_glue, preprocess_gist_sar
 import typer
 import os
 import time
 import yaml
 import wandb
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import time
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -58,24 +58,36 @@ def expand_attention_mask(attention_mask: torch.Tensor, num_heads: int,  batch_s
     )
 
 @app.command()
-def sample_masks(seq_len: int = 32, k: int = 4, p_extend: float = 0.5, extend_k: int = 2):
-    sar_mask = generate_sar_attention_mask(seq_len, k)
-    overlap_mask = generate_overlap_attention_mask(seq_len, k, p_extend, extend_k)
-    default_mask = generate_default_attention_mask(seq_len)
-    glue_mask = generate_glue_attention_mask(seq_len, k)
+def sample_masks(seq_len: int = 32, k: int = 4):
+    sample_input = torch.ones((1, seq_len))
+    gist_token = 2
 
-    sar_mask, overlap_mask, default_mask, glue_mask = sar_mask.int(), overlap_mask.int(), default_mask.int(), glue_mask.int()
-    sar_mask, overlap_mask, default_mask, glue_mask = tensor_to_table(sar_mask), tensor_to_table(overlap_mask), tensor_to_table(default_mask), tensor_to_table(glue_mask)
+    sar_result = preprocess_gist_sar(sample_input, gist_token, k)
+    glue_result = preprocess_gist_glue(sample_input, gist_token, k)
+    default_result = preprocess_default_attention(sample_input)
+
+    sar_mask = sar_result.mask[0]
+    glue_mask = glue_result.mask[0]
+    default_mask = default_result.mask[0]
+
+    sar_mask, default_mask, glue_mask = sar_mask.int(), default_mask.int(), glue_mask.int()
+    print(f"sar_mask_shape={sar_mask.shape}, glue_mask_shape={glue_mask.shape}, default_mask_shape={default_mask.shape}")
+
+    sar_mask, default_mask, glue_mask = tensor_to_table(sar_mask), tensor_to_table(default_mask), tensor_to_table(glue_mask)
 
     console = Console()
     console.print("[bold underline]Glue Attention Mask:[/bold underline]")
     console.print(glue_mask)
+    console.print(f"Input ids: {sar_result.input_ids}")
+    console.print(f"Labels: {sar_result.labels}")
     console.print("[bold underline]SAR Attention Mask:[/bold underline]")
     console.print(sar_mask)
-    console.print("\n[bold underline]Overlap Attention Mask:[/bold underline]")
-    console.print(overlap_mask)
+    console.print(f"Input ids: {sar_result.input_ids}")
+    console.print(f"Labels: {sar_result.labels}")
     console.print("\n[bold underline]Default Attention Mask:[/bold underline]")
     console.print(default_mask)
+    console.print(f"Input ids: {default_result.input_ids}")
+    console.print(f"Labels: {default_result.labels}")
 
 def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None, head_mask=None):
     # Keep the attention weights computation in fp32 to avoid overflow issues
@@ -96,7 +108,7 @@ def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None, head_m
     attn_output = torch.matmul(attn_weights, value)
 
     return attn_output, attn_weights
-    
+
 def no_causal_llama_eager_attn_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -126,10 +138,10 @@ def no_causal_llama_eager_attn_forward(
 def train_model(conf_path: str): # you can train this in default, sar, overlap. however, the eval loop for both sar and overlap will be sar
     with open(conf_path, "r") as f:
         configs = yaml.safe_load(f)
-        
-    mode = configs.get("mode")
-    vocab_size = configs.get("vocab_size")
-    checkpoint_dir = configs.get("checkpoint_dir")
+
+    mode: str = configs.get("mode")
+    vocab_size: int = configs.get("vocab_size")
+    checkpoint_dir: str = configs.get("checkpoint_dir")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     max_length = configs.get("max_length")
@@ -147,7 +159,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     n_embed = configs.get("n_embed")
     n_layer = configs.get("n_layer")
     n_head = configs.get("n_head")
-    
+
     num_warmup_steps = configs.get("num_warmup_steps")
 
     eval_num_batches = configs.get("eval_num_batches")
@@ -155,7 +167,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
-    
+
     name = f"{mode}-arch={model_type}-k={k}-p-extend={p_extend}-extend-k={extend_k}-bs={batch_size}-lr={lr}-embed={n_embed}-layer={n_layer}-head={n_head}-warmup-steps={num_warmup_steps}-wd-lambda={weight_decay_lambda}-timestamp={unix_millis}"
     tokenizer = get_tokenizer()
 
@@ -180,7 +192,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         )
         model = LlamaForCausalLM(config)
         model.set_attn_implementation('eager')
-        
+
         transformers.models.llama.modeling_llama.eager_attention_forward = no_causal_llama_eager_attn_forward
     elif model_type == "gpt-neo":
         if n_layer % 2 == 1:
@@ -242,7 +254,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     train_dataset.set_format(type="torch", columns=["tokens"])
     test_dataset.set_format(type="torch", columns=["tokens"])
-    
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=weight_decay_lambda)
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -252,10 +264,10 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8, shuffle=True) # type: ignore
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8, shuffle=True) # type: ignore
-    
+
     train_iterator = itertools.cycle(train_dataloader)
     test_iterator = itertools.cycle(test_dataloader)
-    
+
     # move wandb initialization here so that you don't accidentally get runs when you crash above
     wandb.init(
         project="sar-transformer",
@@ -263,41 +275,38 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         name=name
     )
 
+    gist_token = 10000
+
+    def run_model(input_ids: Tensor):
+        if mode == "sar":
+            preprocess_result = preprocess_gist_sar(input_ids, gist_token=gist_token, k=k)
+        elif mode == "glue":
+            preprocess_result = preprocess_gist_glue(input_ids, gist_token=gist_token, k=k)
+        elif mode == "default":
+            preprocess_result = preprocess_default_attention(input_ids)
+        else:
+            raise ValueError("Mode must be one of 'sar', 'glue', or 'default'")
+
+        attention_mask, input_ids, labels = preprocess_result.mask, preprocess_result.input_ids, preprocess_result.labels
+        attention_mask = attention_mask.unsqueeze(1).repeat(1, n_head, 1, 1)
+        attention_mask, input_ids, labels = attention_mask.to(device), input_ids.to(device), labels.to(device)
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        return outputs
+
     for step in tqdm(range(num_train_steps), desc="Train Step"):
         start_time_train = time.time()
-
-        if mode == "sar":
-            attention_mask = generate_sar_attention_mask(max_length, k=k)
-        elif mode == "overlap":
-            attention_mask = generate_overlap_attention_mask(max_length, k=k, p_extend=p_extend, extend_k=extend_k)
-        elif mode == "base":
-            attention_mask = generate_default_attention_mask(max_length)
-        elif mode == "glue":
-            attention_mask = generate_glue_attention_mask(max_length, k=k)
-        else:
-            raise ValueError(f"Unknown mode for attention mask: {mode}")
-
         model.train()
         input_ids: Tensor = next(train_iterator)["tokens"]
         input_ids = input_ids.to(device)
-        
-        labels = input_ids.clone()
-        labels[input_ids == tokenizer.pad_token_id] = -100
-        # print("Input ids: ", input_ids.shape)
-
-        batch_size, seq_len = input_ids.shape
-        expanded_attention_mask = expand_attention_mask(attention_mask, n_head, batch_size)
-        expanded_attention_mask = expanded_attention_mask.to(device)
-        outputs = model(input_ids=input_ids, attention_mask=expanded_attention_mask, labels=labels)
+        outputs = run_model(input_ids)
         loss = outputs.loss
-
         # perform a training step
         optimizer.zero_grad()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         scheduler.step()
-    
+
         end_time_train = time.time()
 
         wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train), "train/lr": scheduler.get_last_lr()[0], "train/grad_norm": grad_norm.item()}, step=step)
@@ -308,24 +317,17 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
             start_time_eval = time.time()
             model.eval()
 
-            prompt = "Once upon a time"
-            sample = model.generate(**tokenizer(prompt, return_tensors="pt").to(device), max_length=256, pad_token_id=tokenizer.pad_token_id)
-            print(tokenizer.decode(sample[0]))
+            with torch.no_grad():
+                prompt = "Once upon a time"
+                sample = model.generate(**tokenizer(prompt, return_tensors="pt").to(device), max_length=256, pad_token_id=tokenizer.pad_token_id)
+                print(tokenizer.decode(sample[0]))
 
             eval_losses = []
             for _ in range(eval_num_batches):
                 eval_input_ids = next(test_iterator)["tokens"]
                 eval_input_ids = eval_input_ids.to(device)
-                # print("Eval input ids shape: ", eval_input_ids.shape)
-                
-                eval_labels = eval_input_ids.clone()
-                eval_labels[eval_input_ids == tokenizer.pad_token_id] = -100
-
-                batch_size, seq_len = eval_input_ids.shape
-                expanded_attention_mask = expand_attention_mask(attention_mask, n_head, batch_size)
-                expanded_attention_mask = expanded_attention_mask.to(device)
                 with torch.no_grad():
-                    eval_outputs = model(input_ids=eval_input_ids, attention_mask=expanded_attention_mask, labels=eval_labels)
+                    eval_outputs = run_model(eval_input_ids)
                     eval_loss = eval_outputs.loss
                     eval_losses.append(eval_loss)
 
