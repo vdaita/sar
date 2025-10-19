@@ -25,7 +25,7 @@ def preprocess_gist_glue(x: Tensor, gist_token: int, k: int) -> PreprocessResult
     
     last_zero = torch.zeros((B, seq_len_new, 1), device=result.mask.device).bool()
     last_mask = result.is_gist.unsqueeze(0).unsqueeze(0).repeat(B, 1, 1)
-    print(f"result.mask shape = {result.mask.shape}, last_mask shape = {last_mask.shape}")
+    # print(f"result.mask shape = {result.mask.shape}, last_mask shape = {last_mask.shape}")
     
     result.mask = torch.cat( (result.mask, last_zero), dim=2 ) # (B, seq_len_new, seq_len_new + 1)
     result.mask = torch.cat( ( result.mask, last_mask ), dim=1 ) # (B, seq_len_new + 1, seq_len_new + 1)
