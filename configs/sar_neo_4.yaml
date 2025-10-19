@@ -2,6 +2,7 @@ mode: "sar"
 vocab_size: 10000
 checkpoint_dir: "./checkpoints"
 
+max_position_slots: 512
 max_length: 256
 batch_size: 256
 num_train_steps: 32000

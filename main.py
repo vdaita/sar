@@ -159,7 +159,8 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     n_embed = configs.get("n_embed")
     n_layer = configs.get("n_layer")
     n_head = configs.get("n_head")
-
+    
+    max_position_slots = configs.get("max_position_slots")
     num_warmup_steps = configs.get("num_warmup_steps")
 
     eval_num_batches = configs.get("eval_num_batches")
@@ -181,7 +182,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
     if model_type == "llama":
         config = LlamaConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=max_length,
+            max_position_embeddings=max_position_slots,
             hidden_size=n_embed,
             intermediate_size=3 * n_embed,
             num_hidden_layers=n_layer,
@@ -200,9 +201,9 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
 
         config = GPTNeoConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=max_length,
+            max_position_embeddings=max_position_slots,
             attention_types=[[["global", "local"], n_layer // 2]],
-            window_size=max_length,
+            window_size=max_position_slots,
             hidden_size=n_embed,
             num_layers=n_layer,
             num_heads=n_head,
