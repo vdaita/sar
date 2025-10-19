@@ -18,30 +18,34 @@ def preprocess_gist_glue(x: Tensor, gist_token: int, k: int) -> PreprocessResult
         if token % (k + 1) != 0:
             next_gist = token + (k + 1) - (token % (k + 1))
             if next_gist < seq_len_new:
-                sar_result.mask[:, token, next_gist] = 1 # note: the first dimension is batch
+                result.mask[:, token, next_gist] = 1 # note: the first dimension is batch
 
     # add a new gist token at the end
     result.is_gist = torch.cat( ( result.is_gist, torch.Tensor([1]).to(result.is_gist.device) ) )
     result.mask[:, -1, result.is_gist] = 1
 
-    batch_gist_token = torch.Tensor([gist_token], dtype=torch.long)
+    batch_gist_token = torch.tensor([gist_token], dtype=torch.long)
     batch_gist_token = batch_gist_token.unsqueeze(0).repeat(B, 1)
     batch_gist_token = batch_gist_token.to(result.is_gist.device)
 
-    batch_gist_label_token = torch.Tensor([-100], dtype=torch.long)
+    batch_gist_label_token = torch.tensor([-100], dtype=torch.long)
     batch_gist_label_token = batch_gist_label_token.unsqueeze(0).repeat(B, 1)
     batch_gist_label_token = batch_gist_label_token.to(result.is_gist.device)
 
     result.input_ids = torch.cat( ( result.input_ids, batch_gist_token ), dim=-1 )
     result.labels = torch.cat( ( result.labels, batch_gist_label_token ), dim = -1 )
 
-    return sar_result
+    result.input_ids = result.input_ids.long()
+    result.labels = result.labels.long()
+    return result
 
 def preprocess_gist_sar(x: Tensor, gist_token: int, k: int) -> PreprocessResult:
     B, T = x.shape
 
     assert T % k == 0, "must be divisible"
     num_blocks = T // k
+    
+    x = x.long()
 
     reg_tokens = torch.arange(T, device=x.device)
 
