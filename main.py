@@ -59,8 +59,8 @@ def expand_attention_mask(attention_mask: torch.Tensor, num_heads: int,  batch_s
 
 @app.command()
 def sample_masks(seq_len: int = 32, k: int = 4):
-    sample_input = torch.ones((1, seq_len))
-    gist_token = 2
+    sample_input = torch.arange(start=1, end=seq_len + 1).unsqueeze(0).long()  # shape (1, seq_len)
+    gist_token = -1
 
     sar_result = preprocess_gist_sar(sample_input, gist_token, k)
     glue_result = preprocess_gist_glue(sample_input, gist_token, k)
