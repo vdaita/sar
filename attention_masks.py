@@ -29,6 +29,7 @@ def preprocess_gist_glue(x: Tensor, gist_token: int, k: int) -> PreprocessResult
     
     result.mask = torch.cat( (result.mask, last_zero), dim=2 ) # (B, seq_len_new, seq_len_new + 1)
     result.mask = torch.cat( ( result.mask, last_mask ), dim=1 ) # (B, seq_len_new + 1, seq_len_new + 1)
+    result.mask[:, -(k + 1):, -1] = 1 # connect the last gist token to the previous k tokens
     
     batch_gist_token = torch.tensor([gist_token], dtype=torch.long)
     batch_gist_token = batch_gist_token.unsqueeze(0).repeat(B, 1)
