@@ -275,7 +275,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         name=name
     )
 
-    gist_token = 10000
+    gist_token = 9999
 
     def run_model(input_ids: Tensor):
         if mode == "sar":
@@ -290,7 +290,7 @@ def train_model(conf_path: str): # you can train this in default, sar, overlap. 
         attention_mask, input_ids, labels = preprocess_result.mask, preprocess_result.input_ids, preprocess_result.labels
         attention_mask = attention_mask.unsqueeze(1).repeat(1, n_head, 1, 1)
         attention_mask, input_ids, labels = attention_mask.to(device), input_ids.to(device), labels.to(device)
-        print(f"Attention mask shape: {attention_mask.shape}, max input id: {input_ids.max()}, min input id: {input_ids.min()}")
+        # print(f"Attention mask shape: {attention_mask.shape}, max input id: {input_ids.max()}, min input id: {input_ids.min()}, max label id: {labels.max()}, min label id: {labels.min()}")
         
         assert torch.all(input_ids >= 0) and torch.all(input_ids < vocab_size)
         

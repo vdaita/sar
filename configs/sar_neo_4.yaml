@@ -1,5 +1,5 @@
 mode: "sar"
-vocab_size: 10001
+vocab_size: 10000
 checkpoint_dir: "./checkpoints"
 
 max_length: 256
