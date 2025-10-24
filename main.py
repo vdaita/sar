@@ -89,7 +89,7 @@ def sample_masks(seq_len: int = 32, k: int = 4):
     console.print(f"Input ids: {default_result.input_ids}")
     console.print(f"Labels: {default_result.labels}")
 
-def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None, head_mask=None):
+def _no_causal_gpt_neo_attn(self, query, key, value, attention_mask=None, head_mask=None):    
     # Keep the attention weights computation in fp32 to avoid overflow issues
     query = query.to(torch.float32)
     key = key.to(torch.float32)
