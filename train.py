@@ -2,7 +2,6 @@ import torch
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
 from transformers import GPT2Tokenizer
-from transformer import SARTransformer, Transformer
 from rich import print
 from datasets import load_dataset
 import datasets
@@ -16,18 +15,13 @@ import itertools
 import torch.nn.functional as F
 from typing import Optional, List, Literal
 
+from base_chunk_transformer import ChunkTransformer
+from invertible_sar_transformer import InvertibleSARTransformer
+from multi_loss_transformer import MultiLossTransformer
+
 app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
 DATASET_NAME = "roneneldan/TinyStories"
-
-# am i doing this correctly?
-def calculate_perplexity(logits: Tensor, labels: Tensor):
-    logprobs = F.log_softmax(logits, dim=-1)
-    labels = labels.unsqueeze(-1)
-    nll = -logprobs.gather(dim=-1, index=labels)
-    nll = torch.squeeze(nll, -1)
-    nll = nll.mean()
-    return torch.exp(nll)
 
 @app.command()
 def train(conf_path: str):
@@ -37,26 +31,27 @@ def train(conf_path: str):
     tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
     tokenizer.pad_token = tokenizer.eos_token
 
-    mode = conf.get("mode")
-    vocab_size = conf.get("vocab_size")
-    checkpoint_dir = conf.get("checkpoint_dir")
+    mode: str = conf.get("mode")
+    vocab_size: int = conf.get("vocab_size")
+    checkpoint_dir: str = conf.get("checkpoint_dir")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    max_seq_len = conf.get("max_seq_len")
-    batch_size = conf.get("batch_size")
-    num_train_steps = conf.get("num_train_steps")
+    max_seq_len: int = conf.get("max_seq_len")
+    batch_size: int = conf.get("batch_size")
+    num_train_steps: int = conf.get("num_train_steps")
 
-    eval_every = conf.get("eval_every")
-    save_every = conf.get("save_every")
+    eval_every: int = conf.get("eval_every")
+    save_every: int = conf.get("save_every")
 
-    lr = conf.get("lr")
+    lr: float = conf.get("lr")
+    compress_seq_len: int = conf.get("compress_seq_len")
+    compress_seq_layers: int = conf.get("compress_seq_layers")
+    dim_embed: int = conf.get("dim_embed")
+    dim_ffn: int = conf.get("dim_ffn")
 
-    compress_seq_len = conf.get("compress_seq_len")
-    dim_embed = conf.get("dim_embed")
-    dim_ffn = conf.get("dim_ffn")
-
-    n_layer = conf.get("n_layer")
-    n_head = conf.get("n_head")
+    n_layer: int = conf.get("n_layer")
+    n_layer_compress: int = conf.get("n_layer_compress")
+    n_head: int = conf.get("n_head")
 
     eval_num_batches = conf.get("eval_num_batches")
 
@@ -64,7 +59,8 @@ def train(conf_path: str):
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
     name = f"{mode}-arch={mode}-compress_seq_len={compress_seq_len}-bs={batch_size}-eval_num_batches={eval_num_batches}-lr={lr}-embed={dim_embed}-ffn={dim_ffn}-layer={n_layer}-head={n_head}-timestamp={unix_millis}"
 
-    with open(f"{model_folder}/config.yaml", "w") as f:
+    os.makedirs(model_folder, exist_ok=False)
+    with open(os.path.join(model_folder, "config.yaml"), "w") as f:
         yaml.safe_dump(conf, f)
 
     if mode == "sar":
@@ -75,7 +71,8 @@ def train(conf_path: str):
             max_seq_len,
             n_layer,
             vocab_size,
-            compress_seq_len
+            compress_seq_len,
+            compress_seq_layers
         )
     else:
         model: nn.Module = Transformer(
@@ -97,7 +94,7 @@ def train(conf_path: str):
 
     model = model.to(device)
     train_dataset = load_dataset(DATASET_NAME, split="train")
-    test_dataset = load_dataset(DATASET_NAME, split="test")
+    test_dataset = load_dataset(DATASET_NAME, split="validation")
 
     def preprocess_dataset(dataset):
         return {"tokens": tokenizer(dataset["text"], truncation=True, max_length=max_seq_len, padding="max_length", return_tensors="pt")["input_ids"]}
@@ -139,17 +136,17 @@ def train(conf_path: str):
     def step_model(input_ids: Tensor):
         if mode == "sar":
             logits = model(input_ids)
-            labels = input_ids[:, compress_seq_len:, :]
-            shifted_logits = logits[:, :-compress_seq_len, :]
+            labels = input_ids[:, compress_seq_len:]
+            shifted_logits = logits[:, :-compress_seq_len]
             
             labels = labels.reshape(-1, vocab_size)
             shifted_logits = shifted_logits.reshape(-1, vocab_size)
             
-            loss = F.cross_entropy(labels, shifted_logits)
+            loss = F.cross_entropy(labels, shifted_logits)        
         else:
             logits = model(input_ids)
-            labels = input_ids[:, 1:, :]
-            shifted_logits = logits[:, :-1, :]
+            labels = input_ids[:, 1:]
+            shifted_logits = logits[:, :-1]
             
             labels = labels.reshape(-1, vocab_size)
             shifted_logits = shifted_logits.reshape(-1, vocab_size)
@@ -181,7 +178,9 @@ def train(conf_path: str):
             
             eval_losses: List[float] = []
             eval_ppls: List[float] = []
-            
+            eval_encode_decode_loss_repr: List[float] = []
+            eval_decode_encode_token_repr: List[float] = [] 
+
             for _ in range(eval_num_batches):
                 input_ids = next(test_iterator)["tokens"]
                 input_ids = input_ids.to(device)
@@ -189,13 +188,30 @@ def train(conf_path: str):
                     logits, loss, ppl = step_model(input_ids)
                 eval_losses.append(loss.item())
                 eval_ppls.append(ppl.item())
-            
+
+                pos_ids = torch.arange(max_seq_len, device=model.device)
+                pos_ids = pos_ids.unsqueeze(0)
+                pos_ids = pos_ids.repeat(batch_size, -1)
+
+                reconstruction_losses = model.reconstruction_losses(input_ids, pos_ids)
+                eval_encode_decode_loss_repr.append(reconstruction_losses["encode_decode_loss"].item())
+                eval_decode_encode_token_repr.append(reconstruction_losses["decode_encode_token_loss"].item())
+                            
             end_time_eval = time.perf_counter()
             
             avg_eval_loss = sum(eval_losses) / len(eval_losses)
             avg_eval_ppl = sum(eval_ppls) / len(eval_ppls)
-            wandb.log({"eval/loss": avg_eval_loss, "eval/step_timer": (end_time_eval - start_time_eval), "eval/ppl": avg_eval_ppl}, step=step)
-            print(f"Step {step}: eval loss = {avg_eval_loss:.4f}, eval ppl = {avg_eval_ppl:.4f}, eval time = {(end_time_eval - start_time_eval):.4f}s")
+            avg_eval_encode_decode_repr_loss = sum(eval_encode_decode_loss_repr) / len(eval_encode_decode_loss_repr)
+            avg_eval_decode_encode_token_repr_loss = sum(eval_encode_decode_loss_repr) / len(eval_encode_decode_loss_repr)
+            wandb.log(
+                {
+                    "eval/loss": avg_eval_loss, 
+                    "eval/step_timer": (end_time_eval - start_time_eval), 
+                    "eval/ppl": avg_eval_ppl, 
+                    "eval/repr_encode_decode_loss": avg_eval_encode_decode_repr_loss,
+                    "eval/repr_decode_encode_token_loss": avg_eval_decode_encode_token_repr_loss
+                }, step=step)
+            print(f"Step {step}: eval loss = {avg_eval_loss:.4f}, eval ppl = {avg_eval_ppl:.4f}, eval time = {(end_time_eval - start_time_eval):.4f}s, eval encode->decode loss = {avg_eval_encode_decode_repr_loss}, eval decode->encode token loss = {avg_eval_decode_encode_token_repr_loss}")
         
         if step % save_every == 0:
             save_path = os.path.join(model_folder, f"step-{step}")
