@@ -49,7 +49,7 @@ class InvertibleEncoder(nn.Module):
             return x
 
 class InvertibleSARTransformer(nn.Module):
-    def __init__(self, d_model, n_heads, d_ff, max_seq_len, num_layers, vocab_size, compress_seq_len, compress_num_layers):
+    def __init__(self, d_model, n_heads, d_ff, max_seq_len, vocab_size, compress_seq_len, compress_num_layers, num_layers):
         super(InvertibleSARTransformer, self).__init__()
 
         self.d_model = d_model
@@ -148,10 +148,10 @@ if __name__ == "__main__":
     n_heads = 4
     d_ff = 64
     max_seq_len = 32
-    num_layers = 4
     vocab_size = 512
     compress_seq_len = 4
     compress_num_layers = 1
+    num_layers = 4
     batch_size = 32
 
     transformer = InvertibleSARTransformer(
@@ -159,10 +159,10 @@ if __name__ == "__main__":
         n_heads,
         d_ff,
         max_seq_len,
-        num_layers,
         vocab_size,
         compress_seq_len,
-        compress_num_layers
+        compress_num_layers,
+        num_layers
     )
 
     random_input = torch.randint(vocab_size, (batch_size, max_seq_len))

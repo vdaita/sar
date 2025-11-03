@@ -29,31 +29,34 @@ def train(conf_path: str):
         conf = yaml.safe_load(f)
 
     tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
-    tokenizer.pad_token = tokenizer.eos_token
+    if not tokenizer:
+        raise ValueError("Tokenizer doesn't exist")
+
+    tokenizer.pad_token = tokenizer.eos_token # type: ignore
 
     mode: str = conf.get("mode")
     vocab_size: int = conf.get("vocab_size")
     checkpoint_dir: str = conf.get("checkpoint_dir")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    d_model: int = conf.get("d_model")
+    n_heads: int = conf.get("n_heads")
+    d_ff: int = conf.get("d_ff")
     max_seq_len: int = conf.get("max_seq_len")
-    batch_size: int = conf.get("batch_size")
-    num_train_steps: int = conf.get("num_train_steps")
+    vocab_size: int = conf.get("vocab_size")
+    compress_seq_len: int = conf.get("compress_seq_len")
+    compress_num_layers: int = conf.get("compress_num_layers")
+    num_layers: int = conf.get("num_layers")
+    repr_weight: float = conf.get("repr_weight") # only for the multiloss version
 
+    batch_size: int = conf.get("batch_size")
+    eval_num_batches = conf.get("eval_num_batches")
+    
+    num_train_steps: int = conf.get("num_train_steps")
     eval_every: int = conf.get("eval_every")
     save_every: int = conf.get("save_every")
 
     lr: float = conf.get("lr")
-    compress_seq_len: int = conf.get("compress_seq_len")
-    compress_seq_layers: int = conf.get("compress_seq_layers")
-    dim_embed: int = conf.get("dim_embed")
-    dim_ffn: int = conf.get("dim_ffn")
-
-    n_layer: int = conf.get("n_layer")
-    n_layer_compress: int = conf.get("n_layer_compress")
-    n_head: int = conf.get("n_head")
-
-    eval_num_batches = conf.get("eval_num_batches")
 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
@@ -63,26 +66,42 @@ def train(conf_path: str):
     with open(os.path.join(model_folder, "config.yaml"), "w") as f:
         yaml.safe_dump(conf, f)
 
-    if mode == "sar":
-        model: nn.Module = SARTransformer(
-            dim_embed,
-            n_head,
-            dim_ffn,
+    if mode == "base":
+        model = ChunkTransformer(
+            d_model,
+            n_heads,
+            d_ff,
             max_seq_len,
-            n_layer,
             vocab_size,
             compress_seq_len,
-            compress_seq_layers
+            compress_num_layers,
+            num_layers
+        )
+    elif mode == "invertible":
+        model = InvertibleSARTransformer(
+            d_model,
+            n_heads,
+            d_ff,
+            max_seq_len,
+            vocab_size,
+            compress_seq_len,
+            compress_num_layers,
+            num_layers
+        )
+    elif mode == "multi_loss":
+        model = MultiLossTransformer(
+            d_model,
+            n_heads,
+            d_ff,
+            max_seq_len,
+            vocab_size,
+            compress_seq_len,
+            compress_num_layers,
+            num_layers,
+            repr_weight
         )
     else:
-        model: nn.Module = Transformer(
-            dim_embed,
-            n_head,
-            dim_ffn,
-            max_seq_len,
-            n_layer,
-            vocab_size
-        )
+        raise ValueError("You selected an invalid mode.")
 
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
@@ -133,85 +152,56 @@ def train(conf_path: str):
         name=name
     )
 
-    def step_model(input_ids: Tensor):
-        if mode == "sar":
-            logits = model(input_ids)
-            labels = input_ids[:, compress_seq_len:]
-            shifted_logits = logits[:, :-compress_seq_len]
-            
-            labels = labels.reshape(-1, vocab_size)
-            shifted_logits = shifted_logits.reshape(-1, vocab_size)
-            
-            loss = F.cross_entropy(labels, shifted_logits)        
-        else:
-            logits = model(input_ids)
-            labels = input_ids[:, 1:]
-            shifted_logits = logits[:, :-1]
-            
-            labels = labels.reshape(-1, vocab_size)
-            shifted_logits = shifted_logits.reshape(-1, vocab_size)
-            
-            loss = F.cross_entropy(labels, shifted_logits)
-        ppl = calculate_perplexity(shifted_logits, labels)
-        return logits, loss, ppl
-
     for step in tqdm(range(num_train_steps), desc="Train step"):
         start_time_train = time.perf_counter()
         model.train()
 
         input_ids = next(train_iterator)["tokens"]
         input_ids = input_ids.to(device)
-        logits, loss, ppl = step_model(input_ids)
+        model_out = model(input_ids)
         optimizer.zero_grad()
-        loss.backward()
+        model_out["loss"]["total"].backward()
         optimizer.step()
 
         end_time_train = time.perf_counter()
-        wandb.log({"train/loss": loss.item(), "train/step_timer": (end_time_train - start_time_train), "train/ppl": ppl.item()}, step=step)
+
+        train_report_dict = {
+            "train/step_time": end_time_train - start_time_train
+        }
+        for loss_name in model_out["loss"].keys():
+            train_report_dict[
+                f"train/loss/{loss_name}"
+            ] = model_out["loss"][loss_name].item()
+        wandb.log(train_report_dict, step=step)
         
         if step % 50 == 0:
-            print(f"Step {step}: train loss = {loss.item():.4f}, ppl = {ppl.item():.4f}, step time = {(end_time_train - start_time_train):.4f}s")
+            print(f"Step {step}: ", train_report_dict)
         
         if step % eval_every == 0:
             start_time_eval = time.perf_counter()
             model.eval()
-            
-            eval_losses: List[float] = []
-            eval_ppls: List[float] = []
-            eval_encode_decode_loss_repr: List[float] = []
-            eval_decode_encode_token_repr: List[float] = [] 
 
+            eval_report_dict = {}
             for _ in range(eval_num_batches):
                 input_ids = next(test_iterator)["tokens"]
                 input_ids = input_ids.to(device)
-                with torch.no_grad():
-                    logits, loss, ppl = step_model(input_ids)
-                eval_losses.append(loss.item())
-                eval_ppls.append(ppl.item())
-
-                pos_ids = torch.arange(max_seq_len, device=model.device)
-                pos_ids = pos_ids.unsqueeze(0)
-                pos_ids = pos_ids.repeat(batch_size, -1)
-
-                reconstruction_losses = model.reconstruction_losses(input_ids, pos_ids)
-                eval_encode_decode_loss_repr.append(reconstruction_losses["encode_decode_loss"].item())
-                eval_decode_encode_token_repr.append(reconstruction_losses["decode_encode_token_loss"].item())
-                            
-            end_time_eval = time.perf_counter()
+                model_out = model(input_ids)
+                for loss_name in model_out["loss"].keys():
+                    if not f"train/loss/{loss_name}" in eval_report_dict:
+                        eval_report_dict[f"train/loss/{loss_name}"] = []
+                    eval_report_dict[
+                        f"train/loss/{loss_name}"
+                    ].append(model_out["loss"][loss_name].item())
             
-            avg_eval_loss = sum(eval_losses) / len(eval_losses)
-            avg_eval_ppl = sum(eval_ppls) / len(eval_ppls)
-            avg_eval_encode_decode_repr_loss = sum(eval_encode_decode_loss_repr) / len(eval_encode_decode_loss_repr)
-            avg_eval_decode_encode_token_repr_loss = sum(eval_encode_decode_loss_repr) / len(eval_encode_decode_loss_repr)
-            wandb.log(
-                {
-                    "eval/loss": avg_eval_loss, 
-                    "eval/step_timer": (end_time_eval - start_time_eval), 
-                    "eval/ppl": avg_eval_ppl, 
-                    "eval/repr_encode_decode_loss": avg_eval_encode_decode_repr_loss,
-                    "eval/repr_decode_encode_token_loss": avg_eval_decode_encode_token_repr_loss
-                }, step=step)
-            print(f"Step {step}: eval loss = {avg_eval_loss:.4f}, eval ppl = {avg_eval_ppl:.4f}, eval time = {(end_time_eval - start_time_eval):.4f}s, eval encode->decode loss = {avg_eval_encode_decode_repr_loss}, eval decode->encode token loss = {avg_eval_decode_encode_token_repr_loss}")
+            end_time_eval = time.perf_counter()
+
+            eval_report_dict_averages = {}
+            for loss_name in eval_report_dict:
+                eval_report_dict_averages[loss_name] = sum(eval_report_dict[loss_name]) / len(eval_report_dict[loss_name])
+            eval_report_dict_averages["eval/step_timer"] = end_time_eval - start_time_eval
+
+            wandb.log(eval_report_dict, step=step)
+            print(f"Step {step}: ", eval_report_dict_averages)
         
         if step % save_every == 0:
             save_path = os.path.join(model_folder, f"step-{step}")
