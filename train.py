@@ -205,11 +205,11 @@ def train(conf_path: str):
         
         if step % save_every == 0:
             save_path = os.path.join(model_folder, f"step-{step}")
-            model.save_pretrained(save_path)
+            torch.save(model.state_dict(), save_path)
             print(f"Saved model checkpoint at step {step} to {save_path}")
         
     final_save_path = os.path.join(model_folder, "final")
-    model.save_pretrained(final_save_path)
+    torch.save(model.state_dict(), final_save_path)
     print(f"Saved final model checkpoint to {final_save_path}")
     wandb.finish()
 
