@@ -62,7 +62,7 @@ def train(conf_path: str):
 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
-    name = f"{mode}-arch={mode}-compress_seq_len={compress_seq_len}-compress_n_layer={compress_num_layers}-bs={batch_size}-eval_num_batches={eval_num_batches}-lr={lr}-embed={d_model}-ffn={d_ff}-layer={num_layers}-head={n_heads}-repr_loss={repr_weight}-timestamp={unix_millis}"
+    name = f"{mode}-arch={mode}-compress_seq_len={compress_seq_len}-compress_n_layer={compress_num_layers}-bs={batch_size}-eval_num_batches={eval_num_batches}-lr={lr}-embed={d_model}-ffn={d_ff}-layer={num_layers}-head={n_heads}-repr_loss={repr_loss_weight}-latent_loss_weight={latent_loss_weight}-timestamp={unix_millis}"
 
     os.makedirs(model_folder, exist_ok=False)
     with open(os.path.join(model_folder, "config.yaml"), "w") as f:
