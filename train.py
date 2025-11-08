@@ -109,10 +109,14 @@ def train(conf_path: str):
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
     device = torch.device('cpu')
-    if torch.mps.is_available():
-        device = torch.device('mps')
     if torch.cuda.is_available():
         device = torch.device('cuda')
+    elif torch.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
+
+    print(f"Using device {device}")
 
     model = model.to(device)
     train_dataset = load_dataset(DATASET_NAME, split="train")
