@@ -47,8 +47,10 @@ def train(conf_path: str):
     compress_seq_len: int = conf.get("compress_seq_len")
     compress_num_layers: int = conf.get("compress_num_layers")
     num_layers: int = conf.get("num_layers")
-    repr_weight: float = conf.get("repr_weight") # only for the multiloss version
 
+    repr_loss_weight: float = conf.get("repr_loss_weight") # only for the multiloss version
+    latent_loss_weight: float = conf.get("latent_loss_weight")
+    
     batch_size: int = conf.get("batch_size")
     eval_num_batches = conf.get("eval_num_batches")
     
@@ -98,7 +100,8 @@ def train(conf_path: str):
             compress_seq_len,
             compress_num_layers,
             num_layers,
-            repr_weight
+            repr_loss_weight,
+            latent_loss_weight
         )
     else:
         raise ValueError("You selected an invalid mode.")

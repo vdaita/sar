@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformer_utils import Block
 
 class MultiLossTransformer(nn.Module):
-    def __init__(self, d_model, n_heads, d_ff, max_seq_len, vocab_size, compress_seq_len, compress_num_layers, num_layers, repr_loss_weight):
+    def __init__(self, d_model, n_heads, d_ff, max_seq_len, vocab_size, compress_seq_len, compress_num_layers, num_layers, repr_loss_weight, latent_pred_loss_weight):
         super(MultiLossTransformer, self).__init__()
 
         self.d_model = d_model
@@ -18,6 +18,7 @@ class MultiLossTransformer(nn.Module):
         self.num_layers = num_layers
 
         self.repr_loss_weight = repr_loss_weight
+        self.latent_pred_loss_weight = latent_pred_loss_weight
 
         self.tok_emb = nn.Parameter(torch.randn((self.vocab_size, self.d_model)), requires_grad=True)
         self.pos_emb = nn.Parameter(torch.randn((self.max_seq_len, self.d_model)), requires_grad=True)
@@ -108,7 +109,7 @@ class MultiLossTransformer(nn.Module):
 
         head_decoder_loss = F.cross_entropy(head_dec_x, token_chunks)
 
-        total = decoder_loss + head_decoder_loss + self.repr_loss_weight * repr_loss 
+        total = decoder_loss + self.latent_pred_loss_weight * head_decoder_loss + self.repr_loss_weight * repr_loss 
 
         return {
             "outputs": {
@@ -134,6 +135,7 @@ if __name__ == "__main__":
     num_layers = 4
 
     repr_loss_coeff = 0.5
+    head_loss_coeff = 0.5
 
     transformer = MultiLossTransformer(
         d_model,
@@ -144,7 +146,8 @@ if __name__ == "__main__":
         compress_seq_len,
         compress_num_layers,
         num_layers,
-        repr_loss_coeff
+        repr_loss_coeff,
+        head_loss_coeff
     )
 
     batch_size = 4
