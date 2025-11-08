@@ -190,10 +190,10 @@ def train(conf_path: str):
                 input_ids = input_ids.to(device)
                 model_out = model(input_ids)
                 for loss_name in model_out["loss"].keys():
-                    if not f"train/loss/{loss_name}" in eval_report_dict:
-                        eval_report_dict[f"train/loss/{loss_name}"] = []
+                    if not f"eval/loss/{loss_name}" in eval_report_dict:
+                        eval_report_dict[f"eval/loss/{loss_name}"] = []
                     eval_report_dict[
-                        f"train/loss/{loss_name}"
+                        f"eval/loss/{loss_name}"
                     ].append(model_out["loss"][loss_name].item())
             
             end_time_eval = time.perf_counter()
