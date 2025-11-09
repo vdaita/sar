@@ -23,6 +23,8 @@ app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
 DATASET_NAME = "roneneldan/TinyStories"
 
+torch.multiprocessing.set_sharing_strategy("file_system")
+
 @app.command()
 def train(conf_path: str):
     with open(conf_path, "r") as f:
