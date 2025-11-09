@@ -12,5 +12,7 @@ wheels/
 # File stuff
 checkpoints/
 wandb/
+*.log
+logs/
 
 .idea/
