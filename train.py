@@ -209,7 +209,7 @@ def train(conf_path: str):
                 eval_report_dict_averages[loss_name] = sum(eval_report_dict[loss_name]) / len(eval_report_dict[loss_name])
             eval_report_dict_averages["eval/step_timer"] = end_time_eval - start_time_eval
 
-            wandb.log(eval_report_dict, step=step)
+            wandb.log(eval_report_dict_averages, step=step)
             print(f"Step {step}: ", eval_report_dict_averages)
         
         if step % save_every == 0:
