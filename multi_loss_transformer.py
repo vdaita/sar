@@ -117,7 +117,7 @@ class MultiLossTransformer(nn.Module):
                 "head": head_dec_x
             }, 
             "loss": {
-                "decoder_token": decoder_loss, 
+                "decoded": decoder_loss, 
                 "head_repr": repr_loss, 
                 "head_token": head_decoder_loss, 
                 "total": total
