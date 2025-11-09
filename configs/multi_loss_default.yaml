@@ -12,11 +12,11 @@ num_layers: 4
 repr_loss_weight: 1.0
 latent_loss_weight: 1.0
 
-batch_size: 32
+batch_size: 64
 eval_num_batches: 8
 eval_every: 100
-save_every: 100
-num_train_steps: 5000
+save_every: 2000
+num_train_steps: 50000
 
 lr: 0.0003
 
