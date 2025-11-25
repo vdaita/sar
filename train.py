@@ -25,21 +25,8 @@ DATASET_NAME = "roneneldan/TinyStories"
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 
-@app.command()
-def train(conf_path: str):
-    with open(conf_path, "r") as f:
-        conf = yaml.safe_load(f)
-
-    tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
-    if not tokenizer:
-        raise ValueError("Tokenizer doesn't exist")
-
-    tokenizer.pad_token = tokenizer.eos_token # type: ignore
-
+def get_model(conf):
     mode: str = conf.get("mode")
-
-    checkpoint_dir: str = conf.get("checkpoint_dir")
-    os.makedirs(checkpoint_dir, exist_ok=True)
 
     d_model: int = conf.get("d_model")
     n_heads: int = conf.get("n_heads")
@@ -52,23 +39,6 @@ def train(conf_path: str):
 
     repr_loss_weight: float = conf.get("repr_loss_weight") # only for the multiloss version
     latent_loss_weight: float = conf.get("latent_loss_weight")
-    
-    batch_size: int = conf.get("batch_size")
-    eval_num_batches = conf.get("eval_num_batches")
-    
-    num_train_steps: int = conf.get("num_train_steps")
-    eval_every: int = conf.get("eval_every")
-    save_every: int = conf.get("save_every")
-
-    lr: float = conf.get("lr")
-
-    unix_millis = int(round(time.time() * 1000))
-    model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
-    name = f"{mode}-arch={mode}-compress_seq_len={compress_seq_len}-compress_n_layer={compress_num_layers}-bs={batch_size}-eval_num_batches={eval_num_batches}-lr={lr}-embed={d_model}-ffn={d_ff}-layer={num_layers}-head={n_heads}-repr_loss={repr_loss_weight}-latent_loss_weight={latent_loss_weight}-timestamp={unix_millis}"
-
-    os.makedirs(model_folder, exist_ok=False)
-    with open(os.path.join(model_folder, "config.yaml"), "w") as f:
-        yaml.safe_dump(conf, f)
 
     if mode == "base":
         model = ChunkTransformer(
@@ -107,6 +77,53 @@ def train(conf_path: str):
         )
     else:
         raise ValueError("You selected an invalid mode.")
+
+    return model
+
+@app.command()
+def train(conf_path: str):
+    with open(conf_path, "r") as f:
+        conf = yaml.safe_load(f)
+
+    tokenizer = GPT2Tokenizer.from_pretrained(TOKENIZER_NAME)
+    if not tokenizer:
+        raise ValueError("Tokenizer doesn't exist")
+
+    tokenizer.pad_token = tokenizer.eos_token # type: ignore
+
+    checkpoint_dir: str = conf.get("checkpoint_dir")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    batch_size: int = conf.get("batch_size")
+    eval_num_batches = conf.get("eval_num_batches")
+    
+    num_train_steps: int = conf.get("num_train_steps")
+    eval_every: int = conf.get("eval_every")
+    save_every: int = conf.get("save_every")
+
+    mode: str = conf.get("mode")
+    d_model: int = conf.get("d_model")
+    n_heads: int = conf.get("n_heads")asrga 
+    d_ff: int = conf.get("d_ff")
+    max_seq_len: int = conf.get("max_seq_len")
+    vocab_size: int = conf.get("vocab_size")
+    compress_seq_len: int = conf.get("compress_seq_len")
+    compress_num_layers: int = conf.get("compress_num_layers")
+    num_layers: int = conf.get("num_layers")
+    repr_loss_weight: float = conf.get("repr_loss_weight") # only for the multiloss version
+    latent_loss_weight: float = conf.get("latent_loss_weight")
+
+    lr: float = conf.get("lr")
+
+    unix_millis = int(round(time.time() * 1000))
+    model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
+    name = f"{mode}-arch={mode}-compress_seq_len={compress_seq_len}-compress_n_layer={compress_num_layers}-bs={batch_size}-eval_num_batches={eval_num_batches}-lr={lr}-embed={d_model}-ffn={d_ff}-layer={num_layers}-head={n_heads}-repr_loss={repr_loss_weight}-latent_loss_weight={latent_loss_weight}-timestamp={unix_millis}"
+
+    os.makedirs(model_folder, exist_ok=False)
+    with open(os.path.join(model_folder, "config.yaml"), "w") as f:
+        yaml.safe_dump(conf, f)
+
+    model = get_model(conf)
 
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
 
@@ -196,7 +213,7 @@ def train(conf_path: str):
                 input_ids = input_ids.to(device)
                 model_out = model(input_ids)
                 for loss_name in model_out["loss"].keys():
-                    if not f"eval/loss/{loss_name}" in eval_report_dict:
+                    if f"eval/loss/{loss_name}" not in eval_report_dict:
                         eval_report_dict[f"eval/loss/{loss_name}"] = []
                     eval_report_dict[
                         f"eval/loss/{loss_name}"

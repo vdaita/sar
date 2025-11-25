@@ -37,7 +37,7 @@ class MultiLossTransformer(nn.Module):
             Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.compress_num_layers)
         ])
 
-    def forward(self, tok_ids):
+    def forward(self, tok_ids, input_chunk_vectors=None):
         B, T = tok_ids.shape
         if T % self.compress_seq_len != 0:
             raise ValueError("Need to fix number of tokens to align with compress seq len")
@@ -61,6 +61,9 @@ class MultiLossTransformer(nn.Module):
         enc_x = self.encoder(enc_x)
         enc_x = enc_x[:, -1, :]
         enc_x = enc_x.reshape(B, T // self.compress_seq_len, self.d_model)
+
+        if input_chunk_vectors:
+            enc_x = torch.cat([enc_x, input_chunk_vectors], dim=1)
 
         # transformer layer
         x = self.body(enc_x)
@@ -113,7 +116,7 @@ class MultiLossTransformer(nn.Module):
 
         return {
             "outputs": {
-                "decoder": dec_x, 
+                "decoder": dec_x.reshape(B, -1, self.vocab_size), 
                 "head": head_dec_x
             }, 
             "loss": {
