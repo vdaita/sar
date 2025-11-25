@@ -1,13 +1,14 @@
 mode: 'block_ntp'
 
-d_model: 256
-n_heads: 8
-d_ff: 512
-max_seq_len: 128
-vocab_size: 10000
-compress_seq_len: 4
-num_layers: 4
-decompress_num_layers: 1
+model_conf:
+  d_model: 256
+  n_heads: 8
+  d_ff: 512
+  max_seq_len: 128
+  vocab_size: 10000
+  compress_seq_len: 4
+  num_layers: 4
+  decompress_num_layers: 1
 
 batch_size: 64
 eval_num_batches: 8

@@ -96,8 +96,8 @@ class BlockNTPTransformer(nn.Module):
         x = x @ self.tok_emb.T
         
         # calculate the loss
-        x = x[:, T + 1:, :]
-        tgt_x = tok_ids[:, :-1]
+        x = x[:, T:-1, :]
+        tgt_x = tok_ids[:, 1:]
         
         x = x.reshape(-1, self.vocab_size)
         tgt_x = tgt_x.reshape(-1)

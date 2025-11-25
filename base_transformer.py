@@ -1,6 +1,7 @@
 from torch import nn
 import torch
 from transformer_utils import Block
+import torch.nn.functional as F
 
 class Transformer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, max_seq_len, num_layers, vocab_size):
@@ -48,7 +49,18 @@ class Transformer(nn.Module):
         if torch.isnan(x).any():
             raise ValueError("Transformer has NaNs after final projection")
 
-        return x
+        x_tgt = x[:, :-1]
+        loss = F.cross_entropy(x, x_tgt)
+    
+        return {
+            "outputs": {
+                "decoded": x
+            },
+            "loss": {
+                "ntp_loss": loss,
+                "total": loss
+            }
+        }
 
 if __name__ == "__main__":
     # Test out small models
@@ -58,8 +70,7 @@ if __name__ == "__main__":
     max_seq_len = 32
     num_layers = 4
     vocab_size = 512
-    compress_seq_len = 4
-    compress_num_layers = 1
+
     batch_size = 32
 
     transformer = Transformer(

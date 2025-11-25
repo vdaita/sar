@@ -18,6 +18,9 @@ from typing import Optional, List, Literal
 from base_chunk_transformer import ChunkTransformer
 from invertible_sar_transformer import InvertibleSARTransformer
 from multi_loss_transformer import MultiLossTransformer
+from base_transformer import Transformer
+from block_ntp import BlockNTPTransformer, BlockNTPTransformerConfig
+
 
 app = typer.Typer()
 TOKENIZER_NAME = "georgeyw/TinyStories-tokenizer-10k"
@@ -28,19 +31,38 @@ torch.multiprocessing.set_sharing_strategy("file_system")
 def get_model(conf):
     mode: str = conf.get("mode")
 
-    d_model: int = conf.get("d_model")
-    n_heads: int = conf.get("n_heads")
-    d_ff: int = conf.get("d_ff")
-    max_seq_len: int = conf.get("max_seq_len")
-    vocab_size: int = conf.get("vocab_size")
-    compress_seq_len: int = conf.get("compress_seq_len")
-    compress_num_layers: int = conf.get("compress_num_layers")
-    num_layers: int = conf.get("num_layers")
-
-    repr_loss_weight: float = conf.get("repr_loss_weight") # only for the multiloss version
-    latent_loss_weight: float = conf.get("latent_loss_weight")
-
+    model_conf = conf.get("model_conf")
     
+    if not model_conf:
+        print("model_conf not found in config, using top-level config values.")
+        model_conf = conf
+
+    d_model: int = model_conf.get("d_model")
+    n_heads: int = model_conf.get("n_heads")
+    d_ff: int = model_conf.get("d_ff")
+    max_seq_len: int = model_conf.get("max_seq_len")
+    vocab_size: int = model_conf.get("vocab_size")
+    compress_seq_len: int = model_conf.get("compress_seq_len")
+    compress_num_layers: int = model_conf.get("compress_num_layers")
+    num_layers: int = model_conf.get("num_layers")
+
+    repr_loss_weight: float = model_conf.get("repr_loss_weight") # only for the multiloss version
+    latent_loss_weight: float = model_conf.get("latent_loss_weight")
+
+    if mode == "base":
+        model = Transformer(
+            d_model,
+            n_heads,
+            d_ff,
+            max_seq_len,
+            num_layers,
+            vocab_size
+        )
+    elif mode == "block_ntp":
+        config = BlockNTPTransformerConfig(
+            **model_conf
+        )
+        model = BlockNTPTransformer(config)
     elif mode == "base_chunk":
         model = ChunkTransformer(
             d_model,
@@ -81,6 +103,25 @@ def get_model(conf):
 
     return model
 
+def flatten_dict(d):
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out.update(flatten_dict(v))
+        else:
+            out[k] = v
+    return out
+
+def generate_name_from_config(conf, exclude_from_name=[]) -> str:
+    conf_name_segments = []
+    flat_conf = flatten_dict(conf)
+    for key in flat_conf:
+        if key in exclude_from_name:
+            continue
+        conf_name_segments.append(f"{key}={conf[key]}-")
+    conf_name = "".join(conf_name_segments)
+    return conf_name
+
 @app.command()
 def train(conf_path: str):
     with open(conf_path, "r") as f:
@@ -101,29 +142,18 @@ def train(conf_path: str):
     num_train_steps: int = conf.get("num_train_steps")
     eval_every: int = conf.get("eval_every")
     save_every: int = conf.get("save_every")
-
-    mode: str = conf.get("mode")
-    d_model: int = conf.get("d_model")
-    n_heads: int = conf.get("n_heads") 
-    d_ff: int = conf.get("d_ff")
-    max_seq_len: int = conf.get("max_seq_len")
-    vocab_size: int = conf.get("vocab_size")
-    compress_seq_len: int = conf.get("compress_seq_len")
-    compress_num_layers: int = conf.get("compress_num_layers")
-    num_layers: int = conf.get("num_layers")
-    repr_loss_weight: float = conf.get("repr_loss_weight") # only for the multiloss version
-    latent_loss_weight: float = conf.get("latent_loss_weight")
+    mode = conf.get("mode")
 
     lr: float = conf.get("lr")
 
     unix_millis = int(round(time.time() * 1000))
     model_folder = f"{checkpoint_dir}/model-{mode}-{unix_millis}/"
-    name = f"{mode}-arch={mode}-compress_seq_len={compress_seq_len}-compress_n_layer={compress_num_layers}-bs={batch_size}-eval_num_batches={eval_num_batches}-lr={lr}-embed={d_model}-ffn={d_ff}-layer={num_layers}-head={n_heads}-repr_loss={repr_loss_weight}-latent_loss_weight={latent_loss_weight}-timestamp={unix_millis}"
+    name = generate_name_from_config(conf, exclude_from_name=["checkpoint_dir", "num_train_steps", "eval_every", "save_every"])
 
     os.makedirs(model_folder, exist_ok=False)
     with open(os.path.join(model_folder, "config.yaml"), "w") as f:
         yaml.safe_dump(conf, f)
-
+        
     model = get_model(conf)
 
     print(f"Number of model parameters: {sum(p.numel() for p in model.parameters())}")
