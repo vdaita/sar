@@ -1,4 +1,4 @@
-mode: 'multi_loss_chunk'
+mode: 'block_ntp'
 
 d_model: 256
 n_heads: 8
@@ -6,11 +6,8 @@ d_ff: 512
 max_seq_len: 128
 vocab_size: 10000
 compress_seq_len: 4
-compress_num_layers: 1
 num_layers: 4
-
-repr_loss_weight: 0.1
-latent_loss_weight: 1.0
+decompress_num_layers: 1
 
 batch_size: 64
 eval_num_batches: 8
@@ -20,4 +17,4 @@ num_train_steps: 20000
 
 lr: 0.0003
 
-checkpoint_dir: "./checkpoints/multi_loss"
+checkpoint_dir: "./checkpoints/block_ntp"

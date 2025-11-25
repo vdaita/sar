@@ -1,4 +1,4 @@
-mode: 'multi_loss_chunk'
+mode: 'base_chunk'
 
 d_model: 256
 n_heads: 8
@@ -9,9 +9,6 @@ compress_seq_len: 4
 compress_num_layers: 1
 num_layers: 4
 
-repr_loss_weight: 0.1
-latent_loss_weight: 1.0
-
 batch_size: 64
 eval_num_batches: 8
 eval_every: 100
@@ -20,4 +17,4 @@ num_train_steps: 20000
 
 lr: 0.0003
 
-checkpoint_dir: "./checkpoints/multi_loss"
+checkpoint_dir: "./checkpoints/base/"

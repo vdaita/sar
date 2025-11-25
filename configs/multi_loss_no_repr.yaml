@@ -1,4 +1,4 @@
-mode: 'multi_loss'
+mode: 'multi_loss_chunk'
 
 d_model: 256
 n_heads: 8

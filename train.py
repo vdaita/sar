@@ -40,7 +40,8 @@ def get_model(conf):
     repr_loss_weight: float = conf.get("repr_loss_weight") # only for the multiloss version
     latent_loss_weight: float = conf.get("latent_loss_weight")
 
-    if mode == "base":
+    
+    elif mode == "base_chunk":
         model = ChunkTransformer(
             d_model,
             n_heads,
@@ -51,7 +52,7 @@ def get_model(conf):
             compress_num_layers,
             num_layers
         )
-    elif mode == "invertible":
+    elif mode == "invertible_chunk":
         model = InvertibleSARTransformer(
             d_model,
             n_heads,
@@ -62,7 +63,7 @@ def get_model(conf):
             compress_num_layers,
             num_layers
         )
-    elif mode == "multi_loss":
+    elif mode == "multi_loss_chunk":
         model = MultiLossTransformer(
             d_model,
             n_heads,
@@ -103,7 +104,7 @@ def train(conf_path: str):
 
     mode: str = conf.get("mode")
     d_model: int = conf.get("d_model")
-    n_heads: int = conf.get("n_heads")asrga 
+    n_heads: int = conf.get("n_heads") 
     d_ff: int = conf.get("d_ff")
     max_seq_len: int = conf.get("max_seq_len")
     vocab_size: int = conf.get("vocab_size")
