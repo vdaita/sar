@@ -22,18 +22,16 @@ class BlockNTPTransformerConfig:
 def generate_block_ntp_mask(length: int, compress_seq_len: int) -> torch.Tensor:
     mask = torch.zeros((length * 2, length * 2), dtype=torch.bool)
     for chunk_idx in range(length // compress_seq_len):
-        if chunk_idx - 1 >= 0:
-            mask[:(chunk_idx - 1) * compress_seq_len] = 1
-        mask[length + (chunk_idx) * compress_seq_len : length + (chunk_idx + 1) * compress_seq_len] = 1
+        mask[:chunk_idx * compress_seq_len] = 1 # these are the ground truth tokens
+        mask[length + (chunk_idx) * compress_seq_len : length + (chunk_idx + 1) * compress_seq_len] = 1 # these are the mask tokens being predicted
+        # each mask token position is predicting the value corresponding to length + position
     return mask
 
 def generate_ar_mask(length: int, compress_seq_len: int) -> torch.Tensor:
     mask = torch.zeros((length * 2, length * 2), dtype=torch.bool)
     for i in range(length):
-        chunk_idx = i // compress_seq_len
-        mask[:i] = 1 # view the ground truth for each token
-        # mask[length + chunk_idx * compress_seq_len : length + i + 1] = 1 # view the mask for each token, including the current token. 
-        mask[length + i] = 1 # view the information in the current token
+        mask[:i] = 1 # everything from the preceding token gets seen
+        mask[length + i] = 1 # also see the current mask token
     return mask
     
 
@@ -97,12 +95,9 @@ class BlockNTPTransformer(nn.Module):
         x = x @ self.tok_emb.T
         
         # calculate the loss
-        x = x[:, T:-1, :]
-        tgt_x = tok_ids[:, 1:]
-        
-        x = x.reshape(-1, self.vocab_size)
-        tgt_x = tgt_x.reshape(-1)
-        
+        x = x[:, T:, :].reshape(-1, self.vocab_size)
+        tgt_x = tok_ids.reshape(-1)
+
         loss = F.cross_entropy(x, tgt_x)
         return {
             "outputs": {
