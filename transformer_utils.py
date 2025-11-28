@@ -91,5 +91,5 @@ class Block(nn.Module):
 
     def forward(self, x, mask=None):
         x = check_nan(x, x + self.attention(self.norm1(x), mask=mask))
-        x = check_nan(x, x + self.ffn(self.norm2(x), mask=mask))
+        x = check_nan(x, x + self.ffn(self.norm2(x)))
         return x
