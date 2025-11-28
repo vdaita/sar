@@ -48,9 +48,9 @@ class BlockNTPTransformer(nn.Module):
         self.decompress_num_layers = config.decompress_num_layers
         self.num_layers = config.num_layers
 
-        self.tok_emb = nn.Parameter(torch.randn((self.vocab_size, self.d_model)), requires_grad=True)
+        self.tok_emb = nn.Embedding(vocab_size, d_model)
+        nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
         self.pos_emb = nn.Parameter(torch.randn((self.max_seq_len, self.d_model)), requires_grad=True)
-        self.emb_token = nn.Parameter(torch.randn(1, 1, self.d_model))
 
         self.decoder = nn.ModuleList([
             Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.decompress_num_layers)
@@ -59,6 +59,10 @@ class BlockNTPTransformer(nn.Module):
         self.body = nn.ModuleList([
             Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.num_layers)
         ])
+
+        self.ln = nn.LayerNorm(d_model)
+        self.proj = nn.Linear(d_model, vocab_size, bias=False)
+        self.proj.weight = self.tok_emb.weight
         
         self.mask_tokens = nn.Parameter(torch.randn(1, self.compress_seq_len, self.d_model), requires_grad=True)
         
@@ -77,7 +81,7 @@ class BlockNTPTransformer(nn.Module):
         emb_pos = self.pos_emb[pos_ids]
         
         mask_ids = self.mask_tokens.repeat(B, T // self.compress_seq_len, 1)
-        emb_toks = self.tok_emb[tok_ids]
+        emb_toks = self.tok_emb(tok_ids)
         emb_toks = torch.cat((emb_toks, mask_ids), dim=1)
         
         x = emb_toks + emb_pos    
@@ -91,8 +95,9 @@ class BlockNTPTransformer(nn.Module):
         ar_mask = generate_ar_mask(T, self.compress_seq_len).to(x.device)
         for layer in self.decoder:
             x = layer(x, mask=ar_mask)
-        
-        x = x @ self.tok_emb.T
+
+        x = self.ln(x)
+        x = self.proj(x)
         
         # calculate the loss
         x = x[:, T:, :].reshape(-1, self.vocab_size)

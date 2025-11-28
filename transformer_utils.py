@@ -20,7 +20,7 @@ class SwiGLU(nn.Module):
        return self.down(torch.nn.functional.gelu(self.up(x)) * self.gate(x))
 
 class Attention(nn.Module):
-    def __init__(self, d_model, n_heads, mask=None, use_kv_cache=False):
+    def __init__(self, d_model, n_heads, use_kv_cache=False):
         super(Attention, self).__init__()
 
         self.d_model = d_model
@@ -31,14 +31,12 @@ class Attention(nn.Module):
         self.wk = nn.Linear(d_model, d_model)
         self.wv = nn.Linear(d_model, d_model)
         self.wo = nn.Linear(d_model, d_model)
-
-        self.mask = mask
         self.use_kv_cache = use_kv_cache
 
         if self.use_kv_cache:
             raise NotImplementedError("Haven't implemented KV cache yet")
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         B, T_q, D = x.shape
         T_k, T_v = T_q, T_q
 
@@ -48,13 +46,13 @@ class Attention(nn.Module):
 
         scores = torch.matmul(q_proj, k_proj.transpose(-2, -1)) * self.scale # (B, n_heads, T_q, T_k)
 
-        if self.mask is not None:
-            if self.mask.dim() == 2:
-                mask = self.mask.unsqueeze(0).unsqueeze(1) # (1, 1, T_q, T_k)
-            elif self.mask.dim() == 3:
-                mask = self.mask.unsqueeze(1) # (B, 1, T_q, T_k)
-            elif self.mask.dim() == 4:
-                mask = self.mask
+        if mask is not None:
+            if mask.dim() == 2:
+                mask = mask.unsqueeze(0).unsqueeze(1) # (1, 1, T_q, T_k)
+            elif mask.dim() == 3:
+                mask = mask.unsqueeze(1) # (B, 1, T_q, T_k)
+            elif mask.dim() == 4:
+                mask = mask
             else:
                 raise ValueError("Mask dimension is invalid.")
             scores = scores.masked_fill(mask == 0, float('-inf'))
@@ -93,7 +91,7 @@ class Block(nn.Module):
 
     def forward(self, x, mask=None):
         x = check_nan(self.norm1(x), "norm1")
-        x = check_nan(self.attention(x), "attention")
+        x = check_nan(self.attention(x, mask=mask), "attention")
         x = check_nan(self.norm2(x), "norm2")
         x = check_nan(self.ffn(x), "ffn")
         return x

@@ -14,14 +14,19 @@ class Transformer(nn.Module):
         self.vocab_size = vocab_size
         self.max_seq_len = max_seq_len
 
-        self.tok_emb = nn.Parameter(torch.randn(vocab_size, d_model), requires_grad=True)
+        self.tok_emb = nn.Embedding(vocab_size, d_model)
+        nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
+
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
 
         self.layers = nn.Sequential(*[
             Block(d_model, num_heads, d_ff) for _ in range(num_layers)
         ])
+        self.ln = nn.LayerNorm(d_model)
 
-        self.proj = nn.Linear(d_model, vocab_size)
+        self.proj = nn.Linear(d_model, vocab_size, bias=False)
+        self.proj.weight = self.tok_emb.weight
+        
 
     def reconstruction_losses(self, *args):
         return {"encode_decode_loss": torch.zeros((1,)), "decode_encode_token_loss": torch.zeros((1,))}
@@ -33,7 +38,7 @@ class Transformer(nn.Module):
 
         pos_ids = torch.arange(T, device=x.device)
         pos_emb = self.pos_emb(pos_ids)
-        x = self.tok_emb[x]
+        x = self.tok_emb(x)
         x += pos_emb
 
         if torch.isnan(x).any():
@@ -45,8 +50,10 @@ class Transformer(nn.Module):
         if torch.isnan(x).any():
             raise ValueError("Transformer has NaNs after layers")
 
+        x = self.ln(x)
+
         # project to tokens
-        x = x @ self.tok_emb.T
+        x = self.proj(x)
 
         if torch.isnan(x).any():
             raise ValueError("Transformer has NaNs after final projection")
