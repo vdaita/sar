@@ -100,17 +100,17 @@ class BlockNTPTransformer(nn.Module):
         x = self.proj(x)
         
         # calculate the loss
-        x = x[:, T:, :].reshape(-1, self.vocab_size)
-        tgt_x = tok_ids.reshape(-1)
+        full_loss = F.cross_entropy(x[:, T:, :].reshape(-1, self.vocab_size), tok_ids.reshape(-1)) # this includes the next first token 
+        ntp_loss = F.cross_entropy(x[:, T + 1:, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1)) # i should probably calculate this more efficiently...
 
-        loss = F.cross_entropy(x, tgt_x)
         return {
             "outputs": {
                 "decoded": x
             },
             "loss": {
-                "ntp_loss": loss,
-                "total": loss
+                "ntp_loss": ntp_loss,
+                "full_ntp_loss": full_loss,
+                "total": ntp_loss
             }
         }
         
