@@ -17,7 +17,7 @@ class SwiGLU(nn.Module):
         self.down = nn.Linear(d_ff, d_model)
 
     def forward(self, x):
-       return self.down(torch.nn.functional.gelu(self.up(x)) * self.gate(x))
+       return self.down(torch.nn.functional.silu(self.up(x)) * self.gate(x))
 
 class Attention(nn.Module):
     def __init__(self, d_model, n_heads, use_kv_cache=False):
@@ -25,7 +25,7 @@ class Attention(nn.Module):
 
         self.d_model = d_model
         self.n_heads = n_heads
-        self.scale = d_model ** -0.5
+        self.scale = (d_model // n_heads) ** -0.5
 
         self.wq = nn.Linear(d_model, d_model)
         self.wk = nn.Linear(d_model, d_model)
@@ -90,6 +90,6 @@ class Block(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
 
     def forward(self, x, mask=None):
-        x = check_nan(x, x + self.attention(self.norm1(x), mask=mask))
-        x = check_nan(x, x + self.ffn(self.norm2(x)))
+        x = check_nan(x + self.attention(self.norm1(x), mask=mask), "layernorm + attention")
+        x = check_nan(x + self.ffn(self.norm2(x)), "layernorm + swiglu")
         return x
