@@ -5,7 +5,7 @@ n_heads: 8
 d_ff: 512
 max_seq_len: 128
 vocab_size: 10000
-num_layers: 4
+num_layers: 12
 
 batch_size: 64
 eval_num_batches: 8
@@ -15,4 +15,4 @@ num_train_steps: 50000
 
 lr: 0.0003
 
-checkpoint_dir: "./checkpoints/ntp_base/"
+checkpoint_dir: "./checkpoints/base/"
