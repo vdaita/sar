@@ -55,6 +55,12 @@ class Attention(nn.Module):
                 mask = mask
             else:
                 raise ValueError("Mask dimension is invalid.")
+
+            row_sums = mask.sum(dim=-1)        # shape: (B, 1, T)
+            bad = torch.nonzero(row_sums == 0, as_tuple=False)
+            if bad.numel() > 0:
+                raise ValueError(f"Zero-allowed rows found at: {bad.tolist()}")
+                
             scores = scores.masked_fill(mask == 0, float('-inf'))
         else:
             mask = torch.tril(
