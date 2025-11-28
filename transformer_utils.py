@@ -90,8 +90,6 @@ class Block(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
 
     def forward(self, x, mask=None):
-        x = check_nan(self.norm1(x), "norm1")
-        x = check_nan(self.attention(x, mask=mask), "attention")
-        x = check_nan(self.norm2(x), "norm2")
-        x = check_nan(self.ffn(x), "ffn")
+        x = check_nan(x, x + self.attention(self.norm1(x), mask=mask))
+        x = check_nan(x, x + self.ffn(self.norm2(x), mask=mask))
         return x

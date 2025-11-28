@@ -37,9 +37,9 @@ class Transformer(nn.Module):
         x_tgt = x[:, 1:]
 
         pos_ids = torch.arange(T, device=x.device)
-        pos_emb = self.pos_emb(pos_ids)
+
         x = self.tok_emb(x)
-        x += pos_emb
+        x = x + self.pos_emb(pos_ids)[None, :, :]
 
         if torch.isnan(x).any():
             raise ValueError("Transformer has NaNs after embedding")
