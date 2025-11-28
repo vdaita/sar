@@ -48,7 +48,7 @@ class BlockNTPTransformer(nn.Module):
         self.decompress_num_layers = config.decompress_num_layers
         self.num_layers = config.num_layers
 
-        self.tok_emb = nn.Embedding(vocab_size, d_model)
+        self.tok_emb = nn.Embedding(self.vocab_size, self.d_model)
         nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
         self.pos_emb = nn.Parameter(torch.randn((self.max_seq_len, self.d_model)), requires_grad=True)
 
@@ -60,8 +60,8 @@ class BlockNTPTransformer(nn.Module):
             Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.num_layers)
         ])
 
-        self.ln = nn.LayerNorm(d_model)
-        self.proj = nn.Linear(d_model, vocab_size, bias=False)
+        self.ln = nn.LayerNorm(self.d_model)
+        self.proj = nn.Linear(self.d_model, self.vocab_size, bias=False)
         self.proj.weight = self.tok_emb.weight
         
         self.mask_tokens = nn.Parameter(torch.randn(1, self.compress_seq_len, self.d_model), requires_grad=True)
