@@ -118,7 +118,7 @@ def generate_name_from_config(conf, exclude_from_name=[]) -> str:
     for key in flat_conf:
         if key in exclude_from_name:
             continue
-        conf_name_segments.append(f"{key}={conf[key]}-")
+        conf_name_segments.append(f"{key}={flat_conf[key]}-")
     conf_name = "".join(conf_name_segments)
     return conf_name
 
@@ -143,6 +143,13 @@ def train(conf_path: str):
     eval_every: int = conf.get("eval_every")
     save_every: int = conf.get("save_every")
     mode = conf.get("mode")
+
+    max_seq_len = conf.get("max_seq_len")
+    if not max_seq_len:
+        max_seq_len = conf.get("model_conf").get("max_seq_len")
+    
+    if not max_seq_len:
+        raise ValueError("You should set max_seq_len in either the base conf or the model_conf sub-variable")
 
     lr: float = conf.get("lr")
 

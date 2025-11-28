@@ -29,6 +29,8 @@ class Transformer(nn.Module):
     def forward(self, x):
         # embed tokens
         B, T = x.shape
+        x_tgt = x[:, 1:]
+
         pos_ids = torch.arange(T, device=x.device)
         pos_emb = self.pos_emb(pos_ids)
         x = self.tok_emb[x]
@@ -49,8 +51,12 @@ class Transformer(nn.Module):
         if torch.isnan(x).any():
             raise ValueError("Transformer has NaNs after final projection")
 
-        x_tgt = x[:, :-1]
-        loss = F.cross_entropy(x, x_tgt)
+        x_pred = x[:, :-1]
+        x_pred = x_pred.reshape(-1, self.vocab_size)
+
+        x_tgt = x_tgt.reshape(-1)
+
+        loss = F.cross_entropy(x_pred, x_tgt)
     
         return {
             "outputs": {

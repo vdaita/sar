@@ -8,7 +8,7 @@ from dataclasses import dataclass
 @dataclass
 class BlockNTPTransformerConfig:
     d_model: int
-    num_heads: int
+    n_heads: int
     d_ff: int
     
     max_seq_len: int
@@ -31,8 +31,9 @@ def generate_ar_mask(length: int, compress_seq_len: int) -> torch.Tensor:
     mask = torch.zeros((length * 2, length * 2), dtype=torch.bool)
     for i in range(length):
         chunk_idx = i // compress_seq_len
-        mask[:i] = 1
-        mask[length + chunk_idx * compress_seq_len : length + i] = 1
+        mask[:i] = 1 # view the ground truth for each token
+        # mask[length + chunk_idx * compress_seq_len : length + i + 1] = 1 # view the mask for each token, including the current token. 
+        mask[length + i] = 1 # view the information in the current token
     return mask
     
 
@@ -41,7 +42,7 @@ class BlockNTPTransformer(nn.Module):
         super(BlockNTPTransformer, self).__init__()
 
         self.d_model = config.d_model
-        self.num_heads = config.num_heads
+        self.n_heads = config.n_heads
         self.d_ff = config.d_ff
         self.max_seq_len = config.max_seq_len
         self.vocab_size = config.vocab_size
@@ -54,11 +55,11 @@ class BlockNTPTransformer(nn.Module):
         self.emb_token = nn.Parameter(torch.randn(1, 1, self.d_model))
 
         self.decoder = nn.ModuleList([
-            Block(self.d_model, self.num_heads, self.d_ff) for _ in range(self.decompress_num_layers)
+            Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.decompress_num_layers)
         ])
 
         self.body = nn.ModuleList([
-            Block(self.d_model, self.num_heads, self.d_ff) for _ in range(self.num_layers)
+            Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.num_layers)
         ])
         
         self.mask_tokens = nn.Parameter(torch.randn(1, self.compress_seq_len, self.d_model), requires_grad=True)
