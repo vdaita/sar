@@ -70,7 +70,7 @@ class BlockNTPTransformer(nn.Module):
         nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
         self.pos_emb = nn.Parameter(torch.randn((self.max_seq_len, self.d_model)), requires_grad=True)
         
-        self.proj_down = nn.Linear(self.d_model, self.decompress_d_model) # type: ignore - the type inference for this should work properly
+        # self.proj_down = nn.Linear(self.d_model, self.decompress_d_model) # type: ignore - the type inference for this should work properly
 
         self.decoder = nn.ModuleList([
             Block(self.decompress_d_model, self.decompress_n_heads, self.decompress_d_ff) for _ in range(self.decompress_num_layers)
@@ -111,7 +111,7 @@ class BlockNTPTransformer(nn.Module):
         for layer in self.body:
             x = layer(x, mask=body_mask)
             
-        x = self.proj_down(x)
+        # x = self.proj_down(x)
         
         # decoder layer
         ar_mask = generate_ar_mask(T, self.compress_seq_len, incl_mask_attention=self.incl_mask_ar).to(x.device)
