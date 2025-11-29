@@ -25,11 +25,17 @@ class BlockNTPTransformerConfig:
     incl_mask_ar: Optional[bool] = False
 
     
-def generate_block_ntp_mask(length: int, compress_seq_len: int) -> torch.Tensor:
+def generate_block_ntp_mask(length: int, compress_seq_len: int, incl_mask_attention: bool = False) -> torch.Tensor:
     mask = torch.zeros((length * 2, length * 2), dtype=torch.bool)
+    
     for i in range(length):
-        mask[i, :i + 1] = 1
-    for chunk_idx in range(length // compress_seq_len):
+        if not incl_mask_attention:
+            mask[i, :i + 1] = 1
+        else:
+            chunk_idx = i // compress_seq_len
+            mask[i, :chunk_idx * compress_seq_len] = 1
+            
+    for chunk_idx in range(length // compress_seq_len):            
         mask[length + chunk_idx * compress_seq_len : length + (chunk_idx + 1) * compress_seq_len, :chunk_idx * compress_seq_len] = 1 # these are the ground truth tokens
         mask[length + chunk_idx * compress_seq_len : length + (chunk_idx + 1) * compress_seq_len, length + (chunk_idx) * compress_seq_len : length + (chunk_idx + 1) * compress_seq_len] = 1 # these are the mask tokens being predicted
         # each mask token position is predicting the value corresponding to length + position
@@ -112,7 +118,7 @@ class BlockNTPTransformer(nn.Module):
         x = emb_toks + emb_pos    
         
         # transformer layer
-        body_mask = generate_block_ntp_mask(T, self.compress_seq_len).to(x.device)
+        body_mask = generate_block_ntp_mask(T, self.compress_seq_len, incl_mask_attention=self.incl_mask_ar).to(x.device)
         for layer in self.body:
             x = layer(x, mask=body_mask)
             
