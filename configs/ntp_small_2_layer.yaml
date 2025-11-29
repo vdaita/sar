@@ -1,0 +1,18 @@
+mode: 'base'
+
+d_model: 256
+n_heads: 8
+d_ff: 512
+max_seq_len: 128
+vocab_size: 10000
+num_layers: 2
+
+batch_size: 64
+eval_num_batches: 8
+eval_every: 100
+save_every: 2000
+num_train_steps: 20000
+
+lr: 0.0003
+
+checkpoint_dir: "./checkpoints/ntp_small"
