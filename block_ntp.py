@@ -47,7 +47,7 @@ def generate_ar_mask(length: int, compress_seq_len: int, incl_mask_attention: bo
 
         if incl_mask_attention:
             chunk_start = i - (i % compress_seq_len)
-            mask[length + chunk_start : length + i] = 1
+            mask[length + i, length + chunk_start : length + i] = 1
     
     return mask
     
