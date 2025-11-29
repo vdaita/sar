@@ -43,7 +43,12 @@ def generate_ar_mask(length: int, compress_seq_len: int, incl_mask_attention: bo
     
     for i in range(length):
         mask[length + i, :i + 1] = 1 # everything from the preceding token gets seen
-        mask[length + i, length + i] = 1 # also see the current mask token
+        
+        if incl_mask_attention:
+            chunk_idx = i // compress_seq_len
+            mask[length + i, chunk_idx * compress_seq_len : (chunk_idx + 1) * compress_seq_len] = 1
+        else:
+            mask[length + i, length + i] = 1 # also see the current mask token
         
     return mask
     
@@ -122,7 +127,11 @@ class BlockNTPTransformer(nn.Module):
         x = self.proj(x)
         
         # calculate the loss
-        ntp_loss = F.cross_entropy(x[:, T : -1, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1)) # i should probably calculate this more efficiently...
+        
+        if self.incl_mask_ar:
+            ntp_loss = F.cross_entropy(x[:, :T - 1, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1)) # included mask ar
+        else:
+            ntp_loss = F.cross_entropy(x[:, T : -1, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1))
         return {
             "outputs": {
                 "decoded": x
