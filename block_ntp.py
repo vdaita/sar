@@ -42,13 +42,9 @@ def generate_ar_mask(length: int, compress_seq_len: int, incl_mask_attention: bo
         mask[i, :i + 1] = 1
     
     for i in range(length):
-        mask[length + i, :i] = 1 # everything from the preceding token gets seen
+        mask[length + i, :i + 1] = 1 # everything from the preceding token gets seen
         mask[length + i, length + i] = 1 # also see the current mask token
-
-        if incl_mask_attention:
-            chunk_start = i - (i % compress_seq_len)
-            mask[length + i, length + chunk_start : length + i] = 1
-    
+        
     return mask
     
 
@@ -74,8 +70,7 @@ class BlockNTPTransformer(nn.Module):
         nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
         self.pos_emb = nn.Parameter(torch.randn((self.max_seq_len, self.d_model)), requires_grad=True)
         
-        if self.decompress_d_model != self.d_model:
-            self.proj_down = nn.Linear(self.d_model, self.decompress_d_model) # type: ignore - the type inference for this should work properly
+        self.proj_down = nn.Linear(self.d_model, self.decompress_d_model) # type: ignore - the type inference for this should work properly
 
         self.decoder = nn.ModuleList([
             Block(self.decompress_d_model, self.decompress_n_heads, self.decompress_d_ff) for _ in range(self.decompress_num_layers)
@@ -116,8 +111,7 @@ class BlockNTPTransformer(nn.Module):
         for layer in self.body:
             x = layer(x, mask=body_mask)
             
-        if self.decompress_d_model != self.d_model:
-            x = self.proj_down(x)
+        x = self.proj_down(x)
         
         # decoder layer
         ar_mask = generate_ar_mask(T, self.compress_seq_len, incl_mask_attention=self.incl_mask_ar).to(x.device)
@@ -128,17 +122,13 @@ class BlockNTPTransformer(nn.Module):
         x = self.proj(x)
         
         # calculate the loss
-        # full_loss = F.cross_entropy(x[:, T:, :].reshape(-1, self.vocab_size), tok_ids.reshape(-1)) # this includes the next first token 
-        ntp_loss = F.cross_entropy(x[:, T + 1:, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1)) # i should probably calculate this more efficiently...
-        
-
+        ntp_loss = F.cross_entropy(x[:, T : -1, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1)) # i should probably calculate this more efficiently...
         return {
             "outputs": {
                 "decoded": x
             },
             "loss": {
                 "ntp_loss": ntp_loss,
-                # "full_ntp_loss": full_loss,
                 "total": ntp_loss
             }
         }
