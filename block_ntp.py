@@ -34,6 +34,7 @@ def generate_block_ntp_mask(length: int, compress_seq_len: int, incl_mask_attent
         else:
             chunk_idx = i // compress_seq_len
             mask[i, :chunk_idx * compress_seq_len] = 1
+            mask[i, i] = 1
             
     for chunk_idx in range(length // compress_seq_len):            
         mask[length + chunk_idx * compress_seq_len : length + (chunk_idx + 1) * compress_seq_len, :chunk_idx * compress_seq_len] = 1 # these are the ground truth tokens
