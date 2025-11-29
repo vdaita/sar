@@ -2,6 +2,7 @@ from torch import nn
 import torch
 from transformer_utils import Block
 import torch.nn.functional as F
+from typing import Optional
 
 from dataclasses import dataclass
 
@@ -17,6 +18,7 @@ class BlockNTPTransformerConfig:
     
     decompress_num_layers: int
     num_layers: int
+    incl_mask_ar: Optional[bool] = False
 
     
 def generate_block_ntp_mask(length: int, compress_seq_len: int) -> torch.Tensor:
@@ -29,7 +31,7 @@ def generate_block_ntp_mask(length: int, compress_seq_len: int) -> torch.Tensor:
         # each mask token position is predicting the value corresponding to length + position
     return mask
 
-def generate_ar_mask(length: int, compress_seq_len: int) -> torch.Tensor:
+def generate_ar_mask(length: int, compress_seq_len: int, incl_mask_attention: bool = False) -> torch.Tensor:
     mask = torch.zeros((length * 2, length * 2), dtype=torch.bool)
     
     for i in range(length):
@@ -38,6 +40,10 @@ def generate_ar_mask(length: int, compress_seq_len: int) -> torch.Tensor:
     for i in range(length):
         mask[length + i, :i] = 1 # everything from the preceding token gets seen
         mask[length + i, length + i] = 1 # also see the current mask token
+
+        if incl_mask_attention:
+            chunk_start = i - (i % compress_seq_len)
+            mask[length + chunk_start : length + i] = 1
     
     return mask
     
@@ -54,6 +60,7 @@ class BlockNTPTransformer(nn.Module):
         self.compress_seq_len = config.compress_seq_len
         self.decompress_num_layers = config.decompress_num_layers
         self.num_layers = config.num_layers
+        self.incl_mask_ar = config.incl_mask_ar
 
         self.tok_emb = nn.Embedding(self.vocab_size, self.d_model)
         nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
@@ -99,7 +106,7 @@ class BlockNTPTransformer(nn.Module):
             x = layer(x, mask=body_mask)
         
         # decoder layer
-        ar_mask = generate_ar_mask(T, self.compress_seq_len).to(x.device)
+        ar_mask = generate_ar_mask(T, self.compress_seq_len, incl_mask_attention=self.incl_mask_ar).to(x.device)
         for layer in self.decoder:
             x = layer(x, mask=ar_mask)
 
