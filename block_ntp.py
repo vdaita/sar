@@ -15,9 +15,13 @@ class BlockNTPTransformerConfig:
     max_seq_len: int
     vocab_size: int
     compress_seq_len: int
+    num_layers: int
     
     decompress_num_layers: int
-    num_layers: int
+    decompress_d_model: Optional[int] = -1
+    decompress_n_heads: Optional[int] = -1
+    decompress_d_ff: Optional[int] = -1
+
     incl_mask_ar: Optional[bool] = False
 
     
@@ -61,13 +65,20 @@ class BlockNTPTransformer(nn.Module):
         self.decompress_num_layers = config.decompress_num_layers
         self.num_layers = config.num_layers
         self.incl_mask_ar = config.incl_mask_ar
+        
+        self.decompress_d_model = config.decompress_d_model if config.decompress_d_model != -1 else self.d_model
+        self.decompress_n_heads = config.decompress_n_heads if config.decompress_n_heads != -1 else self.n_heads
+        self.decompress_d_ff = config.decompress_d_ff if config.decompress_d_ff != -1 else self.d_ff
 
         self.tok_emb = nn.Embedding(self.vocab_size, self.d_model)
         nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
         self.pos_emb = nn.Parameter(torch.randn((self.max_seq_len, self.d_model)), requires_grad=True)
+        
+        if self.decompress_d_model != self.d_model:
+            self.proj_down = nn.Linear(self.d_model, self.decompress_d_model) # type: ignore - the type inference for this should work properly
 
         self.decoder = nn.ModuleList([
-            Block(self.d_model, self.n_heads, self.d_ff) for _ in range(self.decompress_num_layers)
+            Block(self.decompress_d_model, self.decompress_n_heads, self.decompress_d_ff) for _ in range(self.decompress_num_layers)
         ])
 
         self.body = nn.ModuleList([
@@ -104,6 +115,9 @@ class BlockNTPTransformer(nn.Module):
         body_mask = generate_block_ntp_mask(T, self.compress_seq_len).to(x.device)
         for layer in self.body:
             x = layer(x, mask=body_mask)
+            
+        if self.decompress_d_model != self.d_model:
+            x = self.proj_down(x)
         
         # decoder layer
         ar_mask = generate_ar_mask(T, self.compress_seq_len, incl_mask_attention=self.incl_mask_ar).to(x.device)
@@ -114,8 +128,9 @@ class BlockNTPTransformer(nn.Module):
         x = self.proj(x)
         
         # calculate the loss
-        full_loss = F.cross_entropy(x[:, T:, :].reshape(-1, self.vocab_size), tok_ids.reshape(-1)) # this includes the next first token 
+        # full_loss = F.cross_entropy(x[:, T:, :].reshape(-1, self.vocab_size), tok_ids.reshape(-1)) # this includes the next first token 
         ntp_loss = F.cross_entropy(x[:, T + 1:, :].reshape(-1, self.vocab_size), tok_ids[:, 1:].reshape(-1)) # i should probably calculate this more efficiently...
+        
 
         return {
             "outputs": {
@@ -123,7 +138,7 @@ class BlockNTPTransformer(nn.Module):
             },
             "loss": {
                 "ntp_loss": ntp_loss,
-                "full_ntp_loss": full_loss,
+                # "full_ntp_loss": full_loss,
                 "total": ntp_loss
             }
         }
